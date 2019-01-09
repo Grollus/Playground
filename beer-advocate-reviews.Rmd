@@ -1,0 +1,82 @@
+---
+title: "Analysis of Beer Reviews"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+library(scales)
+theme_set(theme_minimal())
+# Read in the raw data
+reviews_raw <- read_csv("Data/beerreviews/beer_reviews.csv")
+```
+
+
+
+
+### Data Exploration before Analysis
+```{r}
+# 5840 different breweries represented in the dataset: Sam Adams the largest
+reviews_raw%>%
+  count(brewery_id, brewery_name, sort = TRUE)
+
+#  66055 different beers reviewed. Lots of Stone, Sierra Nevada representation
+reviews_raw%>%
+  count(beer_beerid, beer_name, brewery_name, sort = TRUE)
+
+# removed beers without abv listings and then see how many different beers
+# breweries are producing. 
+# Also tried to see how that compared to the mean/median # of beers made, but
+# that doesn't seem particularly useful
+reviews_raw %>%
+  filter(!is.na(beer_abv))%>%
+  count(brewery_name, beer_name, sort = TRUE)%>%
+  count(brewery_name, sort = TRUE)%>%
+  mutate(avg_num_beers_made = mean(nn),
+         median_num_beers_made = median(nn),
+         fraction = nn/avg_num_beers_made)%>%
+  arrange(desc(fraction))
+
+# Plotting distribution of 5 different review categories
+reviews_raw %>%
+  select(starts_with('review'), -review_profilename)%>%
+  gather(review_type, score, -review_time)%>%
+  ggplot(aes(score))+
+  geom_histogram()+
+  facet_wrap(~review_type)+
+  scale_y_continuous(labels = number_format())
+
+# 104 styles of beer(some seem very close to the same thing)
+reviews_raw%>%
+  count(beer_style, sort = TRUE)
+
+#
+avg_score_by_style <- reviews_raw%>%
+  group_by(beer_style)%>%
+  summarise(avg_score = mean(review_overall),
+            reviews = n())%>%
+  ungroup()%>%
+  arrange(desc(avg_score))
+
+avg_score_by_style%>%
+  mutate(beer_style = fct_reorder(beer_style, avg_score))%>%
+  top_n(25, avg_score)%>%
+  ggplot(aes(avg_score, beer_style))+
+  geom_point()+
+  labs(x = "Score",
+       y = "Beer Style")
+
+reviews_raw %>%
+  filter(is.na(beer_style))
+
+reviews_raw %>%
+  filter(!is.na(beer_abv), beer_abv < 3)%>%
+  ggplot(aes(beer_abv))+
+  geom_histogram()+
+  geom_vline(aes(xintercept = median(beer_abv)), color = 'red')
+```
+
