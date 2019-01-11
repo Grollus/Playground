@@ -54,7 +54,7 @@ reviews_raw %>%
 reviews_raw%>%
   count(beer_style, sort = TRUE)
 
-#
+# Looking at how average score varies by style of beer.
 avg_score_by_style <- reviews_raw%>%
   group_by(beer_style)%>%
   summarise(avg_score = mean(review_overall),
@@ -62,16 +62,75 @@ avg_score_by_style <- reviews_raw%>%
   ungroup()%>%
   arrange(desc(avg_score))
 
-avg_score_by_style%>%
-  mutate(beer_style = fct_reorder(beer_style, avg_score))%>%
-  top_n(25, avg_score)%>%
-  ggplot(aes(avg_score, beer_style))+
-  geom_point()+
-  labs(x = "Score",
-       y = "Beer Style")
+library(broom)
+# This first approach groups by the unique beers and styles--so it averages
+# the score of each individual beer and then our final estimates are an average of 
+# all the unique beers in that beer style. This givens a lot of weight to beers with
+# few reviews
 
-reviews_raw %>%
-  filter(is.na(beer_style))
+# Have to group differently to show conf intervals for scores of beer styles
+by_beerid <- reviews_raw %>%
+  group_by(beer_beerid, beer_style)%>%
+  summarise(reviews = n(),
+            avg_score = mean(review_overall))%>%
+  ungroup()%>%
+  arrange(desc(reviews))
+
+# generate confidence intervals for styles of beer
+beer_style_conf_int <- by_beerid%>%
+  add_count(beer_style)%>%
+  # filters to beers styles with greater than 250 different beers reviewed
+  # may also want to filter to only include specific beers with at least X number of reviews
+  filter(n >=250)%>%
+  nest(-beer_style)%>%
+  mutate(model = map(data, ~t.test(.$avg_score)))%>%
+  unnest(map(model, tidy))
+
+beer_style_conf_int%>%
+  mutate(beer_style = fct_reorder(beer_style, estimate))%>%
+  top_n(25, estimate)%>%
+  ggplot(aes(estimate, beer_style))+
+  geom_point()+
+  geom_errorbarh(aes(xmin = conf.low,
+                     xmax = conf.high))+
+  labs(x = "Average overall review score",
+       y = "Beer Style",
+       title = "Average review score of different styles of beer",
+       subtitle = "Beers grouped by unique beers first, then averaged at the style level")
+
+# This approach creates a unique id for each review(since there isn't one in the dataset)
+# and then it groups by beer style. This means I keep all individual reviews and those
+# unique beers with very few reviews don't get as much weight. This seems like a 
+# really clunky way of doing this, so I am probably missing a much simpler way.
+
+#Assign a unique identifier to each review first
+by_reviewid <- reviews_raw %>%
+  mutate(unique_id = 1:nrow(reviews_raw))%>%
+  mutate(avg_score = review_overall)%>%
+  select(unique_id, beer_style, avg_score)
+
+# generate the conf intervals on the reviewid level data
+beer_style_conf_int_by_reviewid <- by_reviewid%>%
+  add_count(beer_style)%>%
+  # filters to beers styles with greater than 250 different beers reviewed
+  # may also want to filter to only include specific beers with at least X number of reviews
+  filter(n >=250)%>%
+  nest(-beer_style)%>%
+  mutate(model = map(data, ~t.test(.$avg_score)))%>%
+  unnest(map(model, tidy))
+
+# plot
+beer_style_conf_int_by_reviewid%>%
+  mutate(beer_style = fct_reorder(beer_style, estimate))%>%
+  top_n(25, estimate)%>%
+  ggplot(aes(estimate, beer_style))+
+  geom_point()+
+  geom_errorbarh(aes(xmin = conf.low,
+                     xmax = conf.high))+
+  labs(x = "Average overall review score",
+       y = "Beer Style",
+       title = "Average review score of different styles of beer",
+       subtitle = "Averaged directly from the individual review level")
 
 reviews_raw %>%
   filter(!is.na(beer_abv), beer_abv < 3)%>%
