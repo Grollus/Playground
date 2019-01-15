@@ -28,6 +28,18 @@ reviews_raw%>%
 reviews_raw%>%
   count(beer_beerid, beer_name, brewery_name, sort = TRUE)
 
+# How many reviews do beers get?
+reviews_raw %>%
+  count(beer_beerid, beer_name, sort = TRUE)%>%
+  ggplot(aes(n))+
+  geom_histogram()+
+  scale_x_log10()+
+  labs(x = "Number of Reviews",
+       y = "Number of beers",
+       title = "Number of reviews receieved by beers",
+       subtitle = "~80% of beers receive 10 or fewer reviews")
+  
+
 # removed beers without abv listings and then see how many different beers
 # breweries are producing. 
 # Also tried to see how that compared to the mean/median # of beers made, but
@@ -81,7 +93,8 @@ beer_style_conf_int <- by_beerid%>%
   add_count(beer_style)%>%
   # filters to beers styles with greater than 250 different beers reviewed
   # may also want to filter to only include specific beers with at least X number of reviews
-  filter(n >=250)%>%
+  filter(n >=250,
+         reviews >= 50)%>%
   nest(-beer_style)%>%
   mutate(model = map(data, ~t.test(.$avg_score)))%>%
   unnest(map(model, tidy))
@@ -107,14 +120,13 @@ beer_style_conf_int%>%
 by_reviewid <- reviews_raw %>%
   mutate(unique_id = 1:nrow(reviews_raw))%>%
   mutate(avg_score = review_overall)%>%
-  select(unique_id, beer_style, avg_score)
+  select(unique_id, beer_style, avg_score, beer_beerid)
 
 # generate the conf intervals on the reviewid level data
 beer_style_conf_int_by_reviewid <- by_reviewid%>%
   add_count(beer_style)%>%
-  # filters to beers styles with greater than 250 different beers reviewed
-  # may also want to filter to only include specific beers with at least X number of reviews
-  filter(n >=250)%>%
+  # filters to beers styles with greater than 2500 reviews
+  filter(n >=2500)%>%
   nest(-beer_style)%>%
   mutate(model = map(data, ~t.test(.$avg_score)))%>%
   unnest(map(model, tidy))
@@ -130,12 +142,330 @@ beer_style_conf_int_by_reviewid%>%
   labs(x = "Average overall review score",
        y = "Beer Style",
        title = "Average review score of different styles of beer",
-       subtitle = "Averaged directly from the individual review level")
+       subtitle = "Averaged from individual reviews of beer styles with at least 2500 total reviews")
+```
+
+
+```{r}
+# Looking at beer abv; removing reviews with missing abv(about 67k)
+reviews_raw %>%
+  filter(!is.na(beer_abv))%>%
+  count(beer_abv, sort = TRUE)
 
 reviews_raw %>%
-  filter(!is.na(beer_abv), beer_abv < 3)%>%
+  filter(!is.na(beer_abv))%>%
   ggplot(aes(beer_abv))+
-  geom_histogram()+
-  geom_vline(aes(xintercept = median(beer_abv)), color = 'red')
+  geom_histogram()
+
+# Only 18 beers in the dataset are about 20% abv
+reviews_raw%>%
+  filter(!is.na(beer_abv), beer_abv > 20)%>%
+  count(beer_name, beer_abv, brewery_name, beer_style, sort = TRUE)
+
+reviews_raw%>%
+  filter(!is.na(beer_abv), beer_abv > 20)%>%
+  ggplot(aes(beer_abv))+
+  geom_histogram()
+
+# Most beers hoover around the 5% range which isn't surprising as a beer drinker
+reviews_raw %>%
+  filter(!is.na(beer_abv), beer_abv < 20)%>%
+  ggplot(aes(beer_abv))+
+  geom_histogram()
 ```
+
+### Which brewery produces the strongest beers by ABV%?
+This question has more nuance than it appears at first glance. After exploring the 
+data, it is clear that some breweries produce some super high abv beers, but very
+few people ever try them. Or, a small brewery will produce a very small number of beers
+and they will all be very high abv--so perhaps they are specializing in high abv beers.
+The question then becomes what are we trying to answer with the question 'which brewery
+produces the strongest beers by ABV'?
+
+Ways to approach this:
+1. Simple average of abv of all beers produced by a brewery.
+2. Threshold breweries to breweries producing > than X number of different
+beers. Then average those abvs.
+3. Use median to ameliorate the effect of a brewery having just a handful of
+really high abv beers skewing their results.
+4. Is average(or median) even a good measure of this? It's possible a brewery produces
+a lot of high abv beers, but they also produce a ton of more standard fare. Isn't that brewery
+a good choice for high abv lovers?
+```{r}
+average_abv <- reviews_raw %>%
+  # remove reviews with missing abv
+  filter(!is.na(beer_abv), !is.na(brewery_name))%>%
+  # don't want a weighted average, so we grab a df of unique beers for all breweries
+  distinct(brewery_id, beer_name, .keep_all = TRUE)%>%
+  # group them by the brewery and the beer
+  group_by(brewery_id, brewery_name)%>%
+  # just doing a simple average here(very debatable) and grabbing the # of unique beers produced by brewery
+  summarise(avg_abv = mean(beer_abv),
+            med_abv = median(beer_abv),
+            num_beers = n()) %>%
+  ungroup()%>%
+  # optional filtering step here to weed out breweries only producing a small number of beers
+  # filter(num_beers >=10)%>%
+  mutate(mean_beers_produced_overall = mean(num_beers))
+ 
+
+# several brewery_names aren't unique; append the unique id to those so identify
+duplicate_names <- average_abv %>%
+  filter(duplicated(.[["brewery_name"]]))%>%
+  select(brewery_name)
+
+average_abv <- average_abv %>%
+  mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
+                               brewery_name))
+
+average_abv %>%
+  mutate(brewery_name = fct_reorder(brewery_name, avg_abv))%>%
+  filter(num_beers >= 7)%>%
+  top_n(25, avg_abv)%>%
+  ggplot(aes(avg_abv, brewery_name))+
+  geom_point()+
+  labs(x = "%ABV",
+       y = "", 
+       title = "Top 25 Breweries producing the highest average abv beers",
+       subtitle = "Only Breweries producing 7 or more different beers")
+
+average_abv %>%
+  distinct(brewery_name, .keep_all = TRUE)%>%
+  mutate(brewery_name = fct_reorder(brewery_name, med_abv))%>%
+  filter(num_beers >= 7)%>%
+  top_n(25, med_abv)%>%
+  ggplot(aes(med_abv, brewery_name))+
+  geom_point()+
+  labs(x = "%ABV",
+       y = "", 
+       title = "Top 25 Breweries producing the highest median abv beers",
+       subtitle = "Only Breweries producing 7 or more different beers")
+```
+
+Shorschbrau brewery seems to be head and shoulders above the others in average and median
+abv of the beers they produce. With a little googling, it seems they are well known
+for pushing the limits of strong beers. They even produce one that is 57% abv!
+```{r}
+reviews_raw%>%
+  filter(!is.na(beer_abv), brewery_name == "Schorschbräu")%>%
+  distinct(beer_name, .keep_all = TRUE)%>%
+  select(beer_name, beer_abv)
+```
+
+Also want to look at those beers above, say 10% abv. Is there some brewery that produces a lot of
+those, but gets diluted because they produce so many other 'normal' beers--something like Sam
+Adams perhaps.
+
+```{r}
+beers_above_ten_perc <- reviews_raw %>%
+  filter(!is.na(beer_abv), !is.na(brewery_name))%>%
+  #alter the brewery name again like above to uniquely identify those duplicate brewery names
+  mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
+                               brewery_name))%>%
+  distinct(brewery_name,
+           beer_name,
+           .keep_all = TRUE)%>%
+  group_by(brewery_name)%>%
+  summarise(beers = n(),
+            beers_above_10 = sum(beer_abv >=10),
+            per_abv_10 = beers_above_10/beers)
+
+beers_above_ten_perc%>%
+  filter(beers >= 20)%>%
+  mutate(brewery_name = fct_reorder(brewery_name, per_abv_10))%>%
+  top_n(25, per_abv_10)%>%
+  ggplot(aes(per_abv_10, brewery_name))+
+  geom_point()+
+  scale_x_continuous(labels = percent_format())+
+  expand_limits(x = .3)+
+  labs(x = "Percentage of Beers Above 10% ABV",
+       y = "",
+       title = "Percentage of Breweries Beers which are greater than 10% ABV",
+       subtitle = "For breweries producing more than 20 different beers")
+
+
+
+# beers_above_fifteen_perc <- reviews_raw %>%
+#   filter(!is.na(beer_abv), !is.na(brewery_name))%>%
+#   #alter the brewery name again like above to uniquely identify those duplicate brewery names
+#   mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
+#                                brewery_name))%>%
+#   distinct(brewery_name,
+#            beer_name,
+#            .keep_all = TRUE)%>%
+#   group_by(brewery_name)%>%
+#   summarise(beers = n(),
+#             beers_above_15 = sum(beer_abv >=15),
+#             per_abv_15= beers_above_15/beers)
+# 
+# beers_above_fifteen_perc%>%
+#   filter(beers >= 15)%>%
+#   mutate(brewery_name = fct_reorder(brewery_name, per_abv_15))%>%
+#   top_n(25, per_abv_15)%>%
+#   ggplot(aes(per_abv_15, brewery_name))+
+#   geom_point()+
+#   scale_x_continuous(labels = percent_format())+
+#   expand_limits(x = .02)+
+#   labs(x = "Percentage of Beers Above 15% ABV",
+#        y = "",
+#        title = "Percentage of Breweries Beers which are greater than 15% ABV",
+#        subtitle = "For breweries producing more than 15 different beers")
+```
+
+If we are looking for breweries that produce a lot of high abv beers in general, 
+AleSmith Brewery Company is a good choice with over 70% of the beers they produce
+being 10% ABV or higher.
+
+###If you had to pick 3 beers to recommend using only this data, which would you pick?
+
+1. A simple way to do a recommendation is to look at reviewers(and beers) that had a good amount
+of reviews. From those you could pick the 3 highest rated beers (by overall rating?)
+2. A recommender system based on matrix factorization
+
+```{r}
+reviews_raw %>%
+  count(review_profilename, sort = TRUE)%>%
+  ggplot(aes(n))+
+  geom_histogram()+
+  scale_x_log10()
+
+# filter to reviewers who have reviewed above 50 beers and beers with greater than 50 reviews
+over_50_reviews <- reviews_raw%>%
+  add_count(review_profilename)%>%
+  filter(n >= 50)%>%
+  add_count(beer_beerid)%>%
+  rename(num_reviews = nn)%>%
+  filter(num_reviews >=50)
+
+# turn this data frame of reviews into one with the format
+# user_id, item_id, rating
+rec_df <- over_50_reviews %>%
+  mutate(., user_id = group_indices(., review_profilename))%>%
+  # recosystem requires user and item indexs to start at 1 or 0. beerid
+  #starts at 5 because of removed data
+  # mutate(beer_beerid = beer_beerid - 4)%>%
+  select(user_id, beer_beerid, review_overall, review_profilename)
+  
+# splitting into training and testing set
+split_size <- floor(0.85 * nrow(rec_df))
+train_ind <- sample(1:nrow(rec_df), size = split_size)
+train <- rec_df[train_ind,]
+test <- rec_df[-train_ind,]
+
+# using recosystem to build model
+library(recosystem)
+train_data <- data_memory(user_index = train$user_id,
+                          item_index = train$beer_beerid,
+                          rating = train$review_overall, 
+                          index1 = TRUE)
+
+test_data <- data_memory(user_index = test$user_id,
+                         item_index = test$beer_beerid,
+                         rating = test$review_overall,
+                         index1 = TRUE)
+
+# creates the RecoSys object for the model
+recommender <- Reco()
+
+recommender$train(train_data, opts = c(dim = 30, costp_l2 = 0.1, costq_l2 = 0.1,
+                                       lrate = 0.1, niter = 100, nthread = 6, verbose = TRUE))
+
+test$prediction <- recommender$predict(test_data, out_memory())
+```
+
+
+
+### Which of the factors(aroma, taste, appearance, palette) are most important 
+in determining the overall quality of the beer?
+
+Off the top of my head I can think of two ways to approach this:
+1. I can look at the correlation of the 4 sub factors with the overall review
+score of a beer.
+2. I can build a linear model to see which factors are significant when predicting 
+the overall quality of a beer.
+  2a. This could be problematic: Think Bayesian Richard McElrith
+  
+
+
+```{r}
+reviews_raw %>%
+  select(review_appearance, review_aroma, review_palate, review_taste, review_overall)%>%
+  correlate()
+```
+
+
+```{r}
+m1 <- lm(review_overall~ review_appearance + review_aroma + review_taste + review_palate, data = reviews_raw)
+summary(m1)
+
+m2 <- lm(review_overall ~ review_appearance, data = reviews_raw)
+summary(m2)
+m3 <- lm(review_overall ~ review_aroma, data = reviews_raw)
+summary(m3)
+m4 <- lm(review_overall ~ review_taste, data = reviews_raw)
+summary(m4)
+m5 <- lm(review_overall ~ review_palate, data = reviews_raw)
+summary(m5)
+
+
+```
+
+
+
+
+
+
+### If I enjoy a beer due to its aroma and appearance, which beer style should I try?
+Again, there are several ways to approach this question.
+1. Look at which beers styles have high aroma and appearance reviews and recommend those.
+2. Look at aroma and appearance above some threshold value and then recommend the most
+highly rated beer style overall amongst those high aroma and appearance scores.
+
+
+
+```{r}
+aroma_and_appearance <- reviews_raw %>%
+  filter(!is.na(brewery_name))%>%
+  group_by(beer_style)%>%
+  summarise(reviews = n(),
+            avg_aroma = mean(review_aroma),
+            avg_appearance = mean(review_appearance),
+            avg_overall = mean(review_overall))%>%
+  ungroup()%>%
+  mutate(total_aroma_appear = avg_aroma + avg_appearance,
+         avg_aroma_appear = (avg_aroma + avg_appearance)/2)%>%
+  arrange(desc(avg_aroma_appear), desc(avg_overall))
+
+
+aroma_and_appearance %>%
+  mutate(beer_style = fct_reorder(beer_style, avg_aroma_appear))%>%
+  top_n(25, avg_aroma_appear)%>%
+  ggplot(aes(avg_aroma_appear, beer_style))+
+  geom_point()+
+  geom_point(aes(x = avg_overall), color = 'red', alpha = .3)+
+  labs(x = "Average of Aroma and Appearance Scores",
+       y = "")
+
+aroma_and_appearance %>%
+  mutate(beer_style = fct_reorder(beer_style, avg_aroma))%>%
+  top_n(25, avg_aroma)%>%
+  ggplot(aes(avg_aroma, beer_style))+
+  geom_point()+
+  labs(x = "Average of Aroma Score",
+       y = "")
+
+aroma_and_appearance %>%
+  mutate(beer_style = fct_reorder(beer_style, avg_appearance))%>%
+  top_n(25, avg_appearance)%>%
+  ggplot(aes(avg_appearance, beer_style))+
+  geom_point()+
+  labs(x = "Average of Appearance Score",
+       y = "")
+```
+
+This plot of style is not too surprising if you are a beer snob. American and Russian 
+imperial stouts are both highly fragrant, richly colored beers--which happen to be delicious. And a Quad
+is similarly known for it's aroma and beautiful color. This seems to be a good representation of
+fragrant beers with rich, pleasing appearances in the glass.
+
 
