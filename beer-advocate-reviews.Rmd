@@ -174,6 +174,7 @@ reviews_raw %>%
   geom_histogram()
 ```
 
+
 ### Which brewery produces the strongest beers by ABV%?
 This question has more nuance than it appears at first glance. After exploring the 
 data, it is clear that some breweries produce some super high abv beers, but very
@@ -316,6 +317,7 @@ If we are looking for breweries that produce a lot of high abv beers in general,
 AleSmith Brewery Company is a good choice with over 70% of the beers they produce
 being 10% ABV or higher.
 
+
 ###If you had to pick 3 beers to recommend using only this data, which would you pick?
 
 1. A simple way to do a recommendation is to look at reviewers(and beers) that had a good amount
@@ -329,48 +331,97 @@ reviews_raw %>%
   geom_histogram()+
   scale_x_log10()
 
-# filter to reviewers who have reviewed above 50 beers and beers with greater than 50 reviews
+# filter to reviewers who have reviewed above 50 beers and beers with greater than 100 reviews
 over_50_reviews <- reviews_raw%>%
   add_count(review_profilename)%>%
   filter(n >= 50)%>%
   add_count(beer_beerid)%>%
   rename(num_reviews = nn)%>%
-  filter(num_reviews >=50)
+  filter(num_reviews >=100, 
+         !is.na(beer_name),
+         !is.na(review_profilename),
+         !is.na(review_overall))%>%
+  # add new user_id(starting at 1) and beer_id(starting at 1)
+  mutate(., user_id = group_indices(., review_profilename),
+         beer_id = group_indices(., beer_beerid))
 
-# turn this data frame of reviews into one with the format
-# user_id, item_id, rating
-rec_df <- over_50_reviews %>%
-  mutate(., user_id = group_indices(., review_profilename))%>%
-  # recosystem requires user and item indexs to start at 1 or 0. beerid
-  #starts at 5 because of removed data
-  # mutate(beer_beerid = beer_beerid - 4)%>%
-  select(user_id, beer_beerid, review_overall, review_profilename)
-  
-# splitting into training and testing set
-split_size <- floor(0.85 * nrow(rec_df))
-train_ind <- sample(1:nrow(rec_df), size = split_size)
-train <- rec_df[train_ind,]
-test <- rec_df[-train_ind,]
 
-# using recosystem to build model
+user_beer_triplet <- over_50_reviews %>%
+  select(user_id, beer_id, review_overall)
+
 library(recosystem)
-train_data <- data_memory(user_index = train$user_id,
-                          item_index = train$beer_beerid,
-                          rating = train$review_overall, 
-                          index1 = TRUE)
+r <- Reco()
+train_set = data_memory(user_index = user_beer_triplet$user_id,
+                        item_index = user_beer_triplet$beer_id,
+                        rating = user_beer_triplet$review_overall,
+                        index1 = TRUE)
+# dim parameter controls the number of latent factors in the model.
+# Default dim = 10 and that's too few--you end up having pretty much
+# the same beers recommended to everyone. There is a balancing to be done here
+# of creating too many latent factors and essentially overfitting and too few
+# and giving really generic recommendations
+r$train(train_set, opts = list(dim = 50,                        
+                               costp_l1 = 0, costp_l2 = 0.01,   
+                               costq_l1 = 0, costq_l2 = 0.01,   
+                               niter = 20,                      
+                               nthread = 6))
 
-test_data <- data_memory(user_index = test$user_id,
-                         item_index = test$beer_beerid,
-                         rating = test$review_overall,
-                         index1 = TRUE)
 
-# creates the RecoSys object for the model
-recommender <- Reco()
+top_three_beers_for_user <- function(user_beer_sparse = user_beer_triplet, user_id = NULL){
+  
+  # for this proof of concept implementation, just grabbing a random user_id,
+  # but I want to be able to grab a specific user too which is what the if statement
+  # is for.
+  if (is.null(user_id)){
+    user <- sample.int(n_distinct(user_beer_sparse$beer_id), 1)
+  } else{
+    stopifnot(is.numeric(user_id))
+    stopifnot(user_id != 0)
+    user <- user_id
+  }
+  
+  # grab the number of unique beers to build grid for prediction
+  beer <- 1:n_distinct(user_beer_sparse$beer_id)
+  
+  #build grid of beers to predict for user
+  # this doesn't filter out beers they already have reviewed. it predicts them 
+  # anyway.This predict can be used later to gauge the accuracy/usefulness of
+  # the recommender.
+  
+  pred <- expand.grid(user = user, beer = beer)
+  # build recosystem object used for prediction
+  prediction_set <- data_memory(pred$user, 
+                                pred$beer, 
+                                index1 = TRUE)
+  # do the actual predictions and add to prediction grid
+  pred$rating <- r$predict(prediction_set, out_memory())
+  
+  # df of beers the specific user has reviewed
+  users_beers <- user_beer_sparse %>%
+    filter(user_id %in% user)
+  
+  # return top three beers by predicted rating
+  # remove predictions for beers user already reviewed
+  pred %>%
+    filter(!(beer %in% users_beers$beer_id))%>%
+    arrange(desc(rating))%>%
+    # this join allows me to get the beer name, style and brewery name
+    # the prediction df is just id numbers and a rating prediction
+    inner_join((over_50_reviews%>%
+                 distinct(beer_id, .keep_all = TRUE)%>%
+                  select(beer_id, beer_name, beer_style, brewery_name)), by = c("beer" = "beer_id"))%>%
+    top_n(3, rating)
+}
 
-recommender$train(train_data, opts = c(dim = 30, costp_l2 = 0.1, costq_l2 = 0.1,
-                                       lrate = 0.1, niter = 100, nthread = 6, verbose = TRUE))
+users_top_rated_beers <- function(df = over_50_reviews, user = NULL){
+  # function takes a specific user_id and returns the style, name and rating of their top 10 beers
+  df%>%
+    filter(user_id == user)%>%
+    select(user_id, beer_id, beer_name, beer_style, review_overall)%>%
+    top_n(10, review_overall)%>%
+    arrange(desc(review_overall))
+}
 
-test$prediction <- recommender$predict(test_data, out_memory())
 ```
 
 
