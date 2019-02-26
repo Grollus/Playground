@@ -7,13 +7,21 @@ output:
 ---
 
 ```{r setup, include=FALSE}
-knitr::opts_chunk$set(echo = TRUE, cache = TRUE)
+knitr::opts_chunk$set(echo = TRUE,
+                      message = FALSE,
+                      warning = FALSE,
+                      cache = TRUE,
+                      fig.align = 'center',
+                      out.width = "100%",
+                      out.height = "90%")
+library(ggplot2)
+theme_set(theme_minimal())
 ```
 
-```{r data-load, results = FALSE, message = FALSE}
+```{r data-load, results = FALSE, message = FALSE, include = TRUE}
 library(tidyverse)
+library(magrittr)
 library(scales)
-theme_set(theme_minimal())
 # Read in the raw data
 reviews_raw <- read_csv("Data/beerreviews/beer_reviews.csv")
 ```
@@ -40,56 +48,139 @@ This is a really exciting dataset as a beer lover, so without further ado, let's
 
 ### Data Exploration before Analysis
 
-Before answering the questions, I need to get a decent sense of the dataset. `r nrow(reviews_raw%>%distinct(brewery_id))`
-```{r}
+I always need to get a feel for the dataset before doing any sort of analysis. With `r scales::comma(nrow(reviews_raw))` reviews, the
+dataset is large enough to need some exploration to get a handle on, but small enough that I don't have to worry too much about performance or speed while doing so. 
+
+I want to know a bit about who's represented in the dataset. With a little dplyr, I can see that there are `r scales::comma(length(unique(reviews_raw$brewery_id)))` breweries and `r scales::comma(length(unique(reviews_raw$beer_beerid)))` beers represented. The names are pretty familiar if you are a beer drinker. It seems that the beer advocate dataset is a picture of the craft brew beer scene
+and not necessarily representative of all beer drinkers. After all, you have to be pretty 'in' to beer to review every beer you've tried. 
+The big 3 American macro-breweries (Anheuser, Millers and Coors) are present in the data, but not sitting at the top with the most reviews
+like you might expect from the breweries that sell the most beer by [volume](https://www.forbes.com/sites/garystoller/2018/03/20/craft-breweries-dominate-the-top-50-but-guess-which-giants-rule-the-beer-market/#3c5064e6dcad). This isn't particularly important for the questions being asked here, but it's 
+good to identify biases in your dataset as you recognize them.
+
+#### Most Reviewed Breweries
+```{r, most-reviewed-breweries}
 # 5840 different breweries represented in the dataset: Sam Adams the largest
 reviews_raw%>%
   count(brewery_id, brewery_name, sort = TRUE)%>%
+  select(brewery_name, n)%>%
   head(8)%>%
   formattable::formattable()
+```
 
+
+#### Most Reviewed Beers
+```{r, most-reviewed-beers}
 #  66055 different beers reviewed. Lots of Stone, Sierra Nevada representation
 reviews_raw%>%
-  count(beer_beerid, beer_name, brewery_name, sort = TRUE)
+  count(beer_beerid, beer_name, brewery_name, sort = TRUE)%>%
+  select(beer_name, brewery_name, n)%>%
+  head(8)%>%
+  formattable::formattable()
+```
 
-# How many reviews do beers get?
-reviews_raw %>%
-  count(beer_beerid, beer_name, sort = TRUE)%>%
+
+I am also interested to see how many reviews beers typically get. If I'm going to recommend beers, it's probably not a great idea
+to recommend a beer that's only been reviewed 1 time--even if it got a perfect review. Similarly, saying a brewery produces the strongest
+beers by ABV probably means two different things if one brewery makes 15 different beers while the other only makes 1. This gets to the issue of thresholding--at what level do I need to exclude reviews/beers/breweries for not having enough data to give a reasonable answer?
+
+#### How Many Reviews do Beers Receive? 
+
+```{r, review-counts}
+# create df of how man reviews each unique beer has gotten
+reviews_per_beer <- reviews_raw %>%
+  count(beer_beerid, beer_name, sort = TRUE)
+
+# create data frame of mean and median for plot and easy labeling
+reviews_measures <- reviews_per_beer %>%
+  summarise(Mean = round(mean(n)),
+            Median = median(n))%>%
+  # this gather just makes it a tidy df so I can use ggplot easily and get legend labels
+  gather()
+
+
+reviews_per_beer %>%
   ggplot(aes(n))+
-  geom_histogram()+
+  geom_histogram(fill = 'lightblue', color = 'white')+
+  # need log scale to have an interpretable plot--most beers get very few reviews
   scale_x_log10()+
-  labs(x = "Number of Reviews",
-       y = "Number of beers",
-       title = "Number of reviews receieved by beers",
+  # use reviews_measures to add mean/median lines to plot
+  geom_vline(data = reviews_measures, aes(xintercept = value, color = key), lty = 2)+
+  # adjust y axis limits for 'better' looking graph
+  scale_y_continuous(limits = c(0,25000), expand = c(0,0))+
+  labs(color = "")+
+  theme(legend.position = c(.75, .87))+
+  labs(x = "# of Reviews",
+       y = "# of beers",
+       title = "Number of reviews received by beers",
        subtitle = "~80% of beers receive 10 or fewer reviews")
   
+```
 
+It turns out that most beers get *very* few reviews. Median reviews for a beer is just `r median(reviews_per_beer$n)`, but the mean,
+`r round(mean(reviews_per_beer$n))`, is heavily pushed to the right by the very popular beers in the right tail of the distribution.
+
+#### How Many Beers do Breweries Produce?
+
+
+```{r beer-produced-by-breweries}
 # removed beers without abv listings and then see how many different beers
 # breweries are producing. 
 # Also tried to see how that compared to the mean/median # of beers made, but
 # that doesn't seem particularly useful
-reviews_raw %>%
+beers_per_brewery <- reviews_raw %>%
   filter(!is.na(beer_abv))%>%
   count(brewery_name, beer_name, sort = TRUE)%>%
   count(brewery_name, sort = TRUE)%>%
-  mutate(avg_num_beers_made = mean(nn),
-         median_num_beers_made = median(nn),
-         fraction = nn/avg_num_beers_made)%>%
-  arrange(desc(fraction))
+  mutate(produce_one = sum(n==1)/n())
 
-# Plotting distribution of 5 different review categories
-reviews_raw %>%
-  select(starts_with('review'), -review_profilename)%>%
-  gather(review_type, score, -review_time)%>%
-  ggplot(aes(score))+
-  geom_histogram()+
-  facet_wrap(~review_type)+
-  scale_y_continuous(labels = number_format())
+brewery_measures <- beers_per_brewery %>%
+  summarise(Mean = mean(n),
+         Median = median(n))%>%
+  gather()
 
+beers_per_brewery %>%
+  ggplot(aes(n))+
+  geom_histogram(fill = 'lightblue', color = 'white')+
+  geom_vline(data = brewery_measures, aes(xintercept = value, color = key), lty = 2)+
+  scale_x_log10()+
+  scale_y_continuous(limits = c(0, 1100), expand = c(0,0))+
+  theme(legend.position = c(.75, .87))+
+  labs(x = "# of Beers",
+       y = "# of Breweries",
+       title = "Number of Unique Beers Produced by Breweries",
+       subtitle = paste0(percent(beers_per_brewery$produce_one[1]), " of breweries in the dataset only produce 1 beer"),
+       color = "")
+
+```
+
+Over `r scales::percent(beers_per_brewery$produce_one[1])` of breweries only make one beer. The mean number of beers a brewery produces
+is just `r scales::number(brewery_measures$value[1])`, with a median of `r scales::number(brewery_measures$value[2])`. So for the most 
+part, breweries aren't producing(or at least people aren't reviewing) *that* many different beers. This will need to be dealt with
+when deciding how many beers is 'enough' to include a brewery in the highest ABV brewery question.
+
+
+#### Does the Style of Beer Matter? You Bet it Does!
+
+There are 104 different styles of beer represented in the dataset. As you can see, several styles are **really** popular 
+in the dataset, while others are quite uncommon.
+```{r beer-styles}
 # 104 styles of beer(some seem very close to the same thing)
 reviews_raw%>%
   count(beer_style, sort = TRUE)
+```
 
+I think it will be useful to know what effect the style of beer has on the overall review score. Knowing a little bit about beer,
+I could see a situation where one style--let's say Quadrupels(Quads)--are always really highly scored, but another--maybe American Lagers--
+are generally scored very low. Just knowing the style of the beer might give us a lot of information about how that beer is probably
+going to be reviewed.
+
+
+Looking at the top 5 and bottom 5 scoring styles, it's pretty shocking how different their average scores are. Is it really that
+difficult to make a delicious Light Lager? Or on the flip side, are Quads that easy to make--or do humans just love the taste of them?
+Who knows, but I know I want to dive a tiny bit deeper to see how much variance there is in the reviews of each style of beer.
+Maybe it's possible to get a good Light Lager, but there's a whole host of bad ones out there dragging down the average score.
+
+```{r, top-and-bottom-five}
 # Looking at how average score varies by style of beer.
 avg_score_by_style <- reviews_raw%>%
   group_by(beer_style)%>%
@@ -98,6 +189,34 @@ avg_score_by_style <- reviews_raw%>%
   ungroup()%>%
   arrange(desc(avg_score))
 
+# Grab top 5 and bottom 5 and bind together in df
+top_5 <- avg_score_by_style %>%
+  top_n(5, avg_score)
+bottom_5 <- avg_score_by_style%>%
+  top_n(-5, avg_score)
+top_bottom_5 <- bind_rows(top_5, bottom_5)
+
+formattable::formattable(top_bottom_5)
+
+```
+
+#### Overall Review Scores for Different Beer Styles: How Confident are you?
+
+I can generate confidence intervals to see how much variance there is in the scores of different styles of beer. There's
+a couple different ways to approach this--mainly related to how you decide to group--and each have their advantages so I include both here.
+
+
+The first approach groups by unique beers and then style. So, for example, beer 1904 is an American IPA that's had 3000 reviews and 
+and average score of ~4.17. Once I have this information, I can generate confidence intervals, but I need to deal with the tricky 
+question of what beers to include in the calculations. If a beer is only reviewed 1 time, should it be included? What about if a
+beer style only has 15 different beers to it's name? In order to get a good estimation of both the point estimate and the confidence
+intervals, I need to have enough data about each beer, otherwise it could be that only one person reviewed a beer and they just had
+a terrible day and gave it 1 star--and then are skewing our analysis here.
+
+It's definitely a judgement call what level to filter here, but I want to be reasonable confident my intervals are meaningful. 
+I'm only keeping beers that have >= 30 reviews(about 7100), then I count how many beers of each style remain and I'm filtering again to 
+keep those styles with at least 30 beers--so each style that remains has at least 30 different beers that had at least 30 reviews.
+```{r, top-25-styles-conf-int}
 library(broom)
 # This first approach groups by the unique beers and styles--so it averages
 # the score of each individual beer and then our final estimates are an average of 
@@ -114,13 +233,18 @@ by_beerid <- reviews_raw %>%
 
 # generate confidence intervals for styles of beer
 beer_style_conf_int <- by_beerid%>%
+  # filter to beers with at least 30 reviews- leaves us with 7174 different beers
+  filter(reviews >= 30)%>%
+  # count how many beers of each style remain
   add_count(beer_style)%>%
-  # filters to beers styles with greater than 250 different beers reviewed
-  # may also want to filter to only include specific beers with at least X number of reviews
-  filter(n >=250,
-         reviews >= 50)%>%
+  #filter again to keep styles with at least 30 different beers remaining
+  filter(n >= 30)%>%
+  # creates nested list column for each beer style with each beer included, it's average score
+  # and the total number of beers of that style
   nest(-beer_style)%>%
+  # use this list to do a t.test and create a confidence interval for each beer style
   mutate(model = map(data, ~t.test(.$avg_score)))%>%
+  # unnest all this information into a nice tidy df
   unnest(map(model, tidy))
 
 beer_style_conf_int%>%
@@ -130,11 +254,40 @@ beer_style_conf_int%>%
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
                      xmax = conf.high))+
-  labs(x = "Average overall review score",
-       y = "Beer Style",
-       title = "Average review score of different styles of beer",
-       subtitle = "Beers grouped by unique beers first, then averaged at the style level")
+  theme(axis.text.y = element_text(size = 6))+
+  labs(x = "Overall Review Score",
+       y = "",
+       title = "Top 25 Beer Styles",
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
 
+```
+
+The top style here don't surprise me a ton, but it's very interesting to see which styles are more variable than others. If you
+were to just pick a random Imperial Stout/Barleywine/American IPA, you can be pretty confident you know exactly how good of a beer
+you are going to get. But if you pick something like a Gueuze/Foreign Stout/Old Ale, there's just a bit more variation in how 
+'good' the beer is--it could be the best beer you've ever had or it could just be OK.
+
+The bottom part of the style list is interesting not for the styles on it, but for how much more variance there is. Be careful to look
+at the axis labels here(since they are a little misleading compared to the top styles graph), because there's actually quite a bit more variance in how good or bad these beers are. Many of these styles have confidence intervals .2-.3 points wide, whereas the top styles most were rarely over .1. This sounds to me like 'bad' beer styles can still produce good beers.
+
+```{r bottom-25-beer-styles}
+beer_style_conf_int%>%
+  mutate(beer_style = fct_reorder(beer_style, estimate))%>%
+  top_n(-25, estimate)%>%
+  ggplot(aes(estimate, beer_style))+
+  geom_point()+
+  geom_errorbarh(aes(xmin = conf.low,
+                     xmax = conf.high))+
+  theme(axis.text.y = element_text(size = 6))+
+  scale_x_continuous(limits = c(2.35, 3.9), breaks = seq(from = 2.4, to = 4, by = .1), expand = c(0,0))+
+  labs(x = "Overall Review Score",
+       y = "",
+       title = "Bottom 25 Beer Styles",
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
+
+```
+
+```{r top-style-all-beers-approach}
 # This approach creates a unique id for each review(since there isn't one in the dataset)
 # and then it groups by beer style. This means I keep all individual reviews and those
 # unique beers with very few reviews don't get as much weight. This seems like a 
@@ -146,14 +299,24 @@ by_reviewid <- reviews_raw %>%
   mutate(avg_score = review_overall)%>%
   select(unique_id, beer_style, avg_score, beer_beerid)
 
+by_reviewid %>%
+  count(beer_style)%>%
+  ggplot(aes(n))+
+  geom_histogram(fill = 'lightblue', color = 'white')+
+  scale_x_log10()
+  
+
 # generate the conf intervals on the reviewid level data
 beer_style_conf_int_by_reviewid <- by_reviewid%>%
   add_count(beer_style)%>%
   # filters to beers styles with greater than 2500 reviews
-  filter(n >=2500)%>%
+  filter(n >=1000)%>%
   nest(-beer_style)%>%
   mutate(model = map(data, ~t.test(.$avg_score)))%>%
   unnest(map(model, tidy))
+
+
+  
 
 # plot
 beer_style_conf_int_by_reviewid%>%
@@ -163,8 +326,24 @@ beer_style_conf_int_by_reviewid%>%
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
                      xmax = conf.high))+
-  labs(x = "Average overall review score",
-       y = "Beer Style",
+  theme(axis.text.y = element_text(size = 6))+
+  labs(x = "Overall Review Score",
+       y = "",
+       title = "Average review score of different styles of beer",
+       subtitle = "Averaged from individual reviews of beer styles with at least 2500 total reviews")
+```
+
+```{r}
+beer_style_conf_int_by_reviewid%>%
+  mutate(beer_style = fct_reorder(beer_style, estimate))%>%
+  top_n(-25, estimate)%>%
+  ggplot(aes(estimate, beer_style))+
+  geom_point()+
+  geom_errorbarh(aes(xmin = conf.low,
+                     xmax = conf.high))+
+  theme(axis.text.y = element_text(size = 6))+
+  labs(x = "Overall Review Score",
+       y = "",
        title = "Average review score of different styles of beer",
        subtitle = "Averaged from individual reviews of beer styles with at least 2500 total reviews")
 ```
@@ -360,7 +539,7 @@ over_50_reviews <- reviews_raw%>%
   add_count(review_profilename)%>%
   filter(n >= 50)%>%
   add_count(beer_beerid)%>%
-  rename(num_reviews = nn)%>%
+  rename(num_reviews = n)%>%
   filter(num_reviews >=100, 
          !is.na(beer_name),
          !is.na(review_profilename),
@@ -544,4 +723,26 @@ imperial stouts are both highly fragrant, richly colored beers--which happen to 
 is similarly known for it's aroma and beautiful color. This seems to be a good representation of
 fragrant beers with rich, pleasing appearances in the glass.
 
+
+#### Code Appendix
+This section includes additional code that was used--mainly to explore the data--but that didn't make it past the cutting stage of
+report writing. It's included because it's interesting, if not directly relevant to the analysis. 
+```{r, code-appendix}
+# A look at how often beers from the 'macro' breweries are reviewed
+reviews_raw%>%
+  filter(brewery_name %in% c("Anheuser-Busch", "Coors Brewing Company", "Miller Brewing Co.", "Heineken Nederland B.V."))%>%
+  count(brewery_id, brewery_name, sort = TRUE)
+
+# Plotting distribution of 5 different review categories
+reviews_raw %>%
+  select(starts_with('review'), -review_profilename)%>%
+  gather(review_type, score, -review_time)%>%
+  ggplot(aes(score))+
+  geom_histogram()+
+  facet_wrap(~review_type)+
+  scale_y_continuous(labels = number_format(), limits = c(0, 700000), expand = c(0, 0))+
+  labs(y = "",
+       title = "Distribution of Review Scores",
+       subtitle = "Scores all have similar shapes, though Appearance may be a tad narrower")
+```
 
