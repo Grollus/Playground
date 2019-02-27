@@ -46,7 +46,7 @@ answer four analytics questions and present your findings:
 This is a really exciting dataset as a beer lover, so without further ado, let's dive in!
 
 
-### Data Exploration before Analysis
+## Data Exploration before Analysis
 
 I always need to get a feel for the dataset before doing any sort of analysis. With `r scales::comma(nrow(reviews_raw))` reviews, the
 dataset is large enough to need some exploration to get a handle on, but small enough that I don't have to worry too much about performance or speed while doing so. 
@@ -57,7 +57,7 @@ The big 3 American macro-breweries (Anheuser, Millers and Coors) are present in 
 like you might expect from the breweries that sell the most beer by [volume](https://www.forbes.com/sites/garystoller/2018/03/20/craft-breweries-dominate-the-top-50-but-guess-which-giants-rule-the-beer-market/#3c5064e6dcad). This isn't particularly important for the questions being asked here, but it's 
 good to identify biases in your dataset as you recognize them.
 
-#### Most Reviewed Breweries
+### Most Reviewed Breweries
 ```{r, most-reviewed-breweries}
 # 5840 different breweries represented in the dataset: Sam Adams the largest
 reviews_raw%>%
@@ -68,7 +68,7 @@ reviews_raw%>%
 ```
 
 
-#### Most Reviewed Beers
+### Most Reviewed Beers
 ```{r, most-reviewed-beers}
 #  66055 different beers reviewed. Lots of Stone, Sierra Nevada representation
 reviews_raw%>%
@@ -83,7 +83,7 @@ I am also interested to see how many reviews beers typically get. If I'm going t
 to recommend a beer that's only been reviewed 1 time--even if it got a perfect review. Similarly, saying a brewery produces the strongest
 beers by ABV probably means two different things if one brewery makes 15 different beers while the other only makes 1. This gets to the issue of thresholding--at what level do I need to exclude reviews/beers/breweries for not having enough data to give a reasonable answer?
 
-#### How Many Reviews do Beers Receive? 
+### How Many Reviews do Beers Receive? 
 
 ```{r, review-counts}
 # create df of how man reviews each unique beer has gotten
@@ -119,7 +119,7 @@ reviews_per_beer %>%
 It turns out that most beers get *very* few reviews. Median reviews for a beer is just `r median(reviews_per_beer$n)`, but the mean,
 `r round(mean(reviews_per_beer$n))`, is heavily pushed to the right by the very popular beers in the right tail of the distribution.
 
-#### How Many Beers do Breweries Produce?
+### How Many Beers do Breweries Produce?
 
 
 ```{r beer-produced-by-breweries}
@@ -159,7 +159,7 @@ part, breweries aren't producing(or at least people aren't reviewing) *that* man
 when deciding how many beers is 'enough' to include a brewery in the highest ABV brewery question.
 
 
-#### Does the Style of Beer Matter? You Bet it Does!
+### Does the Style of Beer Matter? You Bet it Does!
 
 There are 104 different styles of beer represented in the dataset. As you can see, several styles are **really** popular 
 in the dataset, while others are quite uncommon.
@@ -200,20 +200,21 @@ formattable::formattable(top_bottom_5)
 
 ```
 
-#### Overall Review Scores for Different Beer Styles: How Confident are you?
+### Overall review scores for different beer styles: How confident are you?
 
-I can generate confidence intervals to see how much variance there is in the scores of different styles of beer. There's
+I can generate confidence intervals to see how much variance there is in the scores of different styles of beer. There are
 a couple different ways to approach this--mainly related to how you decide to group--and each have their advantages so I include both here.
 
+#### Filter, then filter again!  Styles that have 30 different beers that had at least 30 reviews
 
 The first approach groups by unique beers and then style. So, for example, beer 1904 is an American IPA that's had 3000 reviews and 
 and average score of ~4.17. Once I have this information, I can generate confidence intervals, but I need to deal with the tricky 
 question of what beers to include in the calculations. If a beer is only reviewed 1 time, should it be included? What about if a
 beer style only has 15 different beers to it's name? In order to get a good estimation of both the point estimate and the confidence
 intervals, I need to have enough data about each beer, otherwise it could be that only one person reviewed a beer and they just had
-a terrible day and gave it 1 star--and then are skewing our analysis here.
+a terrible day and unjustly gave it 1 star--and then are skewing our analysis here.
 
-It's definitely a judgement call what level to filter here, but I want to be reasonable confident my intervals are meaningful. 
+It's definitely a judgement call what level to filter here, but I want to be reasonably confident my intervals are meaningful. 
 I'm only keeping beers that have >= 30 reviews(about 7100), then I count how many beers of each style remain and I'm filtering again to 
 keep those styles with at least 30 beers--so each style that remains has at least 30 different beers that had at least 30 reviews.
 ```{r, top-25-styles-conf-int}
@@ -230,6 +231,15 @@ by_beerid <- reviews_raw %>%
             avg_score = mean(review_overall))%>%
   ungroup()%>%
   arrange(desc(reviews))
+
+#quick df to use for getting number of beers remaining after filter(awful way to do this)
+filtered_beers <- by_beerid%>%
+  # filter to beers with at least 30 reviews- leaves us with 7174 different beers
+  filter(reviews >= 30)%>%
+  # count how many beers of each style remain
+  add_count(beer_style)%>%
+  #filter again to keep styles with at least 30 different beers remaining
+  filter(n >= 30)
 
 # generate confidence intervals for styles of beer
 beer_style_conf_int <- by_beerid%>%
@@ -249,7 +259,7 @@ beer_style_conf_int <- by_beerid%>%
 
 beer_style_conf_int%>%
   mutate(beer_style = fct_reorder(beer_style, estimate))%>%
-  top_n(25, estimate)%>%
+  top_n(20, estimate)%>%
   ggplot(aes(estimate, beer_style))+
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
@@ -257,23 +267,23 @@ beer_style_conf_int%>%
   theme(axis.text.y = element_text(size = 6))+
   labs(x = "Overall Review Score",
        y = "",
-       title = "Top 25 Beer Styles",
+       title = "Top 20 Beer Styles",
        subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
 
 ```
 
-The top style here don't surprise me a ton, but it's very interesting to see which styles are more variable than others. If you
+The top styles here don't surprise me a ton, but it's very interesting to see which styles are more variable than others. If you
 were to just pick a random Imperial Stout/Barleywine/American IPA, you can be pretty confident you know exactly how good of a beer
 you are going to get. But if you pick something like a Gueuze/Foreign Stout/Old Ale, there's just a bit more variation in how 
 'good' the beer is--it could be the best beer you've ever had or it could just be OK.
 
 The bottom part of the style list is interesting not for the styles on it, but for how much more variance there is. Be careful to look
-at the axis labels here(since they are a little misleading compared to the top styles graph), because there's actually quite a bit more variance in how good or bad these beers are. Many of these styles have confidence intervals .2-.3 points wide, whereas the top styles most were rarely over .1. This sounds to me like 'bad' beer styles can still produce good beers.
+at the axis labels here(since they are a little misleading compared to the top styles graph), because there's actually quite a bit more variance in how good or bad these beers are. Many of these styles have confidence intervals .2-.3 points wide, whereas the top styles most were rarely over .1. English Strong Ales, for example, have a 95% confidence interval from `r round(beer_style_conf_int[beer_style_conf_int$beer_style == "English Strong Ale",]$conf.low, 2)` - `r round(beer_style_conf_int[beer_style_conf_int$beer_style == "English Strong Ale",]$conf.high, 2)`. This means it's possible that a English Strong Ale is rated as highly as a beer on the top 20 beer styles graph. But it also means that there are a lot of English Strong Ales that just aren't that good. Simply put, there's a lot of variance in how good the style is.
 
 ```{r bottom-25-beer-styles}
 beer_style_conf_int%>%
   mutate(beer_style = fct_reorder(beer_style, estimate))%>%
-  top_n(-25, estimate)%>%
+  top_n(-20, estimate)%>%
   ggplot(aes(estimate, beer_style))+
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
@@ -282,12 +292,16 @@ beer_style_conf_int%>%
   scale_x_continuous(limits = c(2.35, 3.9), breaks = seq(from = 2.4, to = 4, by = .1), expand = c(0,0))+
   labs(x = "Overall Review Score",
        y = "",
-       title = "Bottom 25 Beer Styles",
+       title = "Bottom 20 Beer Styles",
        subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
 
 ```
 
-```{r top-style-all-beers-approach}
+#### Keep all the beers--within reason!
+
+The filtering approach above has a clear bias. Beers--and beer styles-- that are popular are included in the final results. There's a very good reason for filtering out those beers, but we definitely lose a lot of beers in the process--some `r scales::comma(nrow(by_beerid) - nrow(filtered_beers))`. Another approach that avoids losing so many beers is to avoid filtering out individual beers with very few reviews and instead to treat beers as members of the beer style family and not remember individual beers just because they only have a handful of reviews. I do a quick filter to make sure no style has fewer than 30 reviews(spoiler: none do!) and then plot the results with confidence intervals.
+
+```{r top-styles-all-beers-approach}
 # This approach creates a unique id for each review(since there isn't one in the dataset)
 # and then it groups by beer style. This means I keep all individual reviews and those
 # unique beers with very few reviews don't get as much weight. This seems like a 
@@ -299,29 +313,20 @@ by_reviewid <- reviews_raw %>%
   mutate(avg_score = review_overall)%>%
   select(unique_id, beer_style, avg_score, beer_beerid)
 
-by_reviewid %>%
-  count(beer_style)%>%
-  ggplot(aes(n))+
-  geom_histogram(fill = 'lightblue', color = 'white')+
-  scale_x_log10()
-  
-
 # generate the conf intervals on the reviewid level data
 beer_style_conf_int_by_reviewid <- by_reviewid%>%
   add_count(beer_style)%>%
-  # filters to beers styles with greater than 2500 reviews
-  filter(n >=1000)%>%
+  # filters to beers styles with at least 30 reviews
+  filter(n >=30)%>%
   nest(-beer_style)%>%
   mutate(model = map(data, ~t.test(.$avg_score)))%>%
   unnest(map(model, tidy))
 
 
-  
-
 # plot
 beer_style_conf_int_by_reviewid%>%
   mutate(beer_style = fct_reorder(beer_style, estimate))%>%
-  top_n(25, estimate)%>%
+  top_n(20, estimate)%>%
   ggplot(aes(estimate, beer_style))+
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
@@ -329,14 +334,17 @@ beer_style_conf_int_by_reviewid%>%
   theme(axis.text.y = element_text(size = 6))+
   labs(x = "Overall Review Score",
        y = "",
-       title = "Average review score of different styles of beer",
-       subtitle = "Averaged from individual reviews of beer styles with at least 2500 total reviews")
+       title = "Top 20 Beer Styles: No filtering to remove beers with few reviews",
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
 ```
+The results are pretty similar to the other approach with two major differences. First, the confidence intervals are narrower for both graphs. This is expected because of how I did the grouping. Instead of having, say, 100 beers to base the estimates off of, these graphs may use thousands of reviews--remember all those one review beers we filtered out before? With all that additional data, I expected the confidence intervals to narrow. Second, we see a handful of new styles present on each graph. Lambic - Unblended, Gose and Roggenbier all didn't make the cut before, but are present now. 
 
-```{r}
+Essentially though, the information present is pretty similar. Reviewers seem to love stouts, belgian ales, sours and IPAs and they tend to dislike lagers and light beers.
+
+```{r, bottom-styles-all-beers-approach}
 beer_style_conf_int_by_reviewid%>%
   mutate(beer_style = fct_reorder(beer_style, estimate))%>%
-  top_n(-25, estimate)%>%
+  top_n(-20, estimate)%>%
   ggplot(aes(estimate, beer_style))+
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
@@ -344,58 +352,72 @@ beer_style_conf_int_by_reviewid%>%
   theme(axis.text.y = element_text(size = 6))+
   labs(x = "Overall Review Score",
        y = "",
-       title = "Average review score of different styles of beer",
-       subtitle = "Averaged from individual reviews of beer styles with at least 2500 total reviews")
+       title = "Bottom 20 Beer Styles: No filtering to remove beers with few reviews",
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
 ```
 
 
-```{r}
+
+
+### Which brewery produces the strongest beers by ABV%?
+
+First things first, there's `r scales::comma(sum(is.na(reviews_raw$beer_abv)))` reviews with no ABV data so we need to remove that data. It's only `r scales::percent(sum(is.na(reviews_raw$beer_abv))/nrow(reviews_raw))` of all reviews, so for the time being I'm not going to worry about it too much. You can see from the histogram of the distribution of ABV's that the vast majority of beers are under 10% ABV.
+Only 18 beers out of over 66,000! are over 20% ABV.
+```{r, beer-abv-exploration}
 # Looking at beer abv; removing reviews with missing abv(about 67k)
 reviews_raw %>%
   filter(!is.na(beer_abv))%>%
-  count(beer_abv, sort = TRUE)
-
-reviews_raw %>%
-  filter(!is.na(beer_abv))%>%
   ggplot(aes(beer_abv))+
-  geom_histogram()
+  geom_histogram(fill = 'lightblue', color = 'white')+
+  scale_y_continuous(labels = scales::comma_format(), expand = c(0,0))+
+  scale_x_continuous(labels = scales::number_format(suffix = "%"),
+                     expand = c(0,0),
+                     breaks = seq(from = 0, to = 60, by = 10))+
+  labs(x = "ABV",
+       y = "",
+       title = "Distribution of Beer ABV %")
 
 # Only 18 beers in the dataset are about 20% abv
 reviews_raw%>%
   filter(!is.na(beer_abv), beer_abv > 20)%>%
-  count(beer_name, beer_abv, brewery_name, beer_style, sort = TRUE)
+  count(beer_name, beer_abv, brewery_name, beer_style, sort = TRUE)%>%
+  select(-n)%>%
+  arrange(desc(beer_abv))%>%
+  formattable::formattable()
+```
 
+When we divide the data into reviews of beers > 20% ABV and those < 20% ABV, it's easy to see how uncommon reviews for really high ABV beers are. The vast majority of beers review fall right around the 5% range.
+
+```{r, zoom-in-beer-abv-distributions}
 reviews_raw%>%
   filter(!is.na(beer_abv), beer_abv > 20)%>%
   ggplot(aes(beer_abv))+
-  geom_histogram()
+  geom_histogram(fill = 'lightblue', color = 'white')+
+  scale_y_continuous(labels = scales::comma_format(), expand = c(0,0))+
+  scale_x_continuous(labels = scales::number_format(suffix = "%"))+
+  labs(x = "ABV",
+       y = "",
+       title = "Distribution of Beer ABV: Filtering out Beers below 20% ABV")
 
 # Most beers hoover around the 5% range which isn't surprising as a beer drinker
 reviews_raw %>%
   filter(!is.na(beer_abv), beer_abv < 20)%>%
   ggplot(aes(beer_abv))+
-  geom_histogram()
+  geom_histogram(fill = 'lightblue', color = 'white')+
+  scale_y_continuous(labels = scales::comma_format(), expand = c(0,0))+
+  scale_x_continuous(labels = scales::number_format(suffix = "%"),
+                     expand = c(0,0))+
+  labs(x = "ABV",
+       y = "",
+       title = "Distribution of Beer ABV: Excluding beers above 20% ABV")
 ```
 
+The question of which brewery produces the strongest beers by ABV has more nuance than it appears at first glance. First, the question asks which brewery produces the strongest **beers** which I am taking to mean it needs to produce more than just one beer that happens to be super strong. Second, how should I measure how strong a breweries beers are? An average of them? Maybe take the median? What about looking at the proportion of beers that a brewery produces that are above some predetermined 'strong' beer threshold? All these methods seem to have merit and are pretty simple and quick. Let's try them out and see what they tell us.
 
-### Which brewery produces the strongest beers by ABV%?
-This question has more nuance than it appears at first glance. After exploring the 
-data, it is clear that some breweries produce some super high abv beers, but very
-few people ever try them. Or, a small brewery will produce a very small number of beers
-and they will all be very high abv--so perhaps they are specializing in high abv beers.
-The question then becomes what are we trying to answer with the question 'which brewery
-produces the strongest beers by ABV'?
+After a little bit of filtering, grouping and aggregation(which you can see in the code fold below), you can see that Schorschbräu ranks at the top of both the mean and median rankings. In fact, the top 4 on both graphs are the same--albeit with one positional swap. One note: Why did I only include breweries that make 4 or more beers? Because the median number of beers produced is 4 and that seemed reasonable.
 
-Ways to approach this:
-1. Simple average of abv of all beers produced by a brewery.
-2. Threshold breweries to breweries producing > than X number of different
-beers. Then average those abvs.
-3. Use median to ameliorate the effect of a brewery having just a handful of
-really high abv beers skewing their results.
-4. Is average(or median) even a good measure of this? It's possible a brewery produces
-a lot of high abv beers, but they also produce a ton of more standard fare. Isn't that brewery
-a good choice for high abv lovers?
-```{r}
+
+```{r, strongest-beers-by-mean-median}
 average_abv <- reviews_raw %>%
   # remove reviews with missing abv
   filter(!is.na(beer_abv), !is.na(brewery_name))%>%
@@ -403,69 +425,83 @@ average_abv <- reviews_raw %>%
   distinct(brewery_id, beer_name, .keep_all = TRUE)%>%
   # group them by the brewery and the beer
   group_by(brewery_id, brewery_name)%>%
-  # just doing a simple average here(very debatable) and grabbing the # of unique beers produced by brewery
+  # getting mean, median and number of beers produced by each brewery
   summarise(avg_abv = mean(beer_abv),
             med_abv = median(beer_abv),
             num_beers = n()) %>%
   ungroup()%>%
-  # optional filtering step here to weed out breweries only producing a small number of beers
-  # filter(num_beers >=10)%>%
-  mutate(mean_beers_produced_overall = mean(num_beers))
+  # get the median and mean number of beers produced overall--will use for determining the threshold to cutoff breweries
+  mutate(mean_beers_produced_overall = mean(num_beers),
+         median_beers_produced_overall = median(num_beers))
  
 
-# several brewery_names aren't unique; append the unique id to those so identify
+# several brewery_names aren't unique; append the unique id to the brewery name to get a unique brewery_name
 duplicate_names <- average_abv %>%
   filter(duplicated(.[["brewery_name"]]))%>%
   select(brewery_name)
 
+
 average_abv <- average_abv %>%
   mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
-                               brewery_name))
+                               brewery_name))%>%
+  # several breweries have multiple names separated by '/'. Keeping only the first name used for this
+  separate(brewery_name, 
+           sep = "/",
+           into = c("brewery_name", NA))
 
 average_abv %>%
   mutate(brewery_name = fct_reorder(brewery_name, avg_abv))%>%
-  filter(num_beers >= 7)%>%
-  top_n(25, avg_abv)%>%
+  filter(num_beers >= 4)%>%
+  top_n(10, avg_abv)%>%
   ggplot(aes(avg_abv, brewery_name))+
   geom_point()+
-  labs(x = "%ABV",
+  theme(axis.text.y = element_text(size = 6))+
+  scale_x_continuous(labels = scales::number_format(suffix = "%"))+
+  labs(x = "ABV",
        y = "", 
-       title = "Top 25 Breweries producing the highest average abv beers",
-       subtitle = "Only Breweries producing 7 or more different beers")
+       title = "Breweries Producing the 'Strongest' Beers: By Mean",
+       subtitle = "Only Breweries producing 4 or more different beers")
 
 average_abv %>%
   distinct(brewery_name, .keep_all = TRUE)%>%
   mutate(brewery_name = fct_reorder(brewery_name, med_abv))%>%
-  filter(num_beers >= 7)%>%
-  top_n(25, med_abv)%>%
+  filter(num_beers >= 4)%>%
+  top_n(10, med_abv)%>%
   ggplot(aes(med_abv, brewery_name))+
   geom_point()+
-  labs(x = "%ABV",
+  theme(axis.text.y = element_text(size = 6))+
+  scale_x_continuous(labels = scales::number_format(suffix = "%"))+
+  labs(x = "ABV",
        y = "", 
-       title = "Top 25 Breweries producing the highest median abv beers",
-       subtitle = "Only Breweries producing 7 or more different beers")
+       title = "Breweries Producing the 'Strongest' Beers: By Median",
+       subtitle = "Only Breweries producing 4 or more different beers")
 ```
 
-Shorschbrau brewery seems to be head and shoulders above the others in average and median
-abv of the beers they produce. With a little googling, it seems they are well known
-for pushing the limits of strong beers. They even produce one that is 57% abv!
-```{r}
-reviews_raw%>%
-  filter(!is.na(beer_abv), brewery_name == "Schorschbräu")%>%
-  distinct(beer_name, .keep_all = TRUE)%>%
-  select(beer_name, beer_abv)
+
+```{r, median-mean-beer-calculation}
+mean_median_beerabv <- reviews_raw %>%
+  # remove reviews with missing abv
+  filter(!is.na(beer_abv), !is.na(brewery_name))%>%
+  # don't want a weighted average, so we grab a df of unique beers for all breweries
+  distinct(brewery_id, beer_name, .keep_all = TRUE)%>%
+  summarise(mean_abv = mean(beer_abv),
+            median_abv = median(beer_abv))
 ```
 
-Also want to look at those beers above, say 10% abv. Is there some brewery that produces a lot of
-those, but gets diluted because they produce so many other 'normal' beers--something like Sam
-Adams perhaps.
+Now what if the brewery that produces the strongest beers is the one that has the highest proportion of it's beers above some ABV threshold. We know the mean ABV for a beer is `r round(mean_median_beerabv$mean_abv, 2)`% (median `r round(mean_median_beerabv$median_abv, 2)`%)
+
+
 
 ```{r}
+
 beers_above_ten_perc <- reviews_raw %>%
   filter(!is.na(beer_abv), !is.na(brewery_name))%>%
   #alter the brewery name again like above to uniquely identify those duplicate brewery names
   mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
                                brewery_name))%>%
+  separate(brewery_name, 
+           sep = "/",
+           into = c("brewery_name", NA))%>%
   distinct(brewery_name,
            beer_name,
            .keep_all = TRUE)%>%
@@ -475,51 +511,36 @@ beers_above_ten_perc <- reviews_raw %>%
             per_abv_10 = beers_above_10/beers)
 
 beers_above_ten_perc%>%
-  filter(beers >= 20)%>%
+  filter(beers >= 10)%>%
   mutate(brewery_name = fct_reorder(brewery_name, per_abv_10))%>%
   top_n(25, per_abv_10)%>%
   ggplot(aes(per_abv_10, brewery_name))+
   geom_point()+
   scale_x_continuous(labels = percent_format())+
   expand_limits(x = .3)+
+  theme(axis.text.y = element_text(size = 6))+
   labs(x = "Percentage of Beers Above 10% ABV",
        y = "",
-       title = "Percentage of Breweries Beers which are greater than 10% ABV",
-       subtitle = "For breweries producing more than 20 different beers")
-
-
-
-# beers_above_fifteen_perc <- reviews_raw %>%
-#   filter(!is.na(beer_abv), !is.na(brewery_name))%>%
-#   #alter the brewery name again like above to uniquely identify those duplicate brewery names
-#   mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
-#                                brewery_name))%>%
-#   distinct(brewery_name,
-#            beer_name,
-#            .keep_all = TRUE)%>%
-#   group_by(brewery_name)%>%
-#   summarise(beers = n(),
-#             beers_above_15 = sum(beer_abv >=15),
-#             per_abv_15= beers_above_15/beers)
-# 
-# beers_above_fifteen_perc%>%
-#   filter(beers >= 15)%>%
-#   mutate(brewery_name = fct_reorder(brewery_name, per_abv_15))%>%
-#   top_n(25, per_abv_15)%>%
-#   ggplot(aes(per_abv_15, brewery_name))+
-#   geom_point()+
-#   scale_x_continuous(labels = percent_format())+
-#   expand_limits(x = .02)+
-#   labs(x = "Percentage of Beers Above 15% ABV",
-#        y = "",
-#        title = "Percentage of Breweries Beers which are greater than 15% ABV",
-#        subtitle = "For breweries producing more than 15 different beers")
+       title = "What Percentage of Breweries Beers are > 10% ABV",
+       subtitle = "For breweries producing more than 10 different beers")
 ```
 
 If we are looking for breweries that produce a lot of high abv beers in general, 
 AleSmith Brewery Company is a good choice with over 70% of the beers they produce
 being 10% ABV or higher.
 
+
+Shorschbrau brewery seems to be head and shoulders above the others in average and median
+abv of the beers they produce. With a little googling, it seems they are well known
+for pushing the limits of strong beers. They even produce one that is 57% abv!
+```{r}
+reviews_raw%>%
+  filter(!is.na(beer_abv), brewery_name == "Schorschbräu")%>%
+  distinct(beer_name, .keep_all = TRUE)%>%
+  select(beer_name, beer_abv)%>%
+  arrange(desc(beer_abv))%>%
+  formattable::formattable()
+```
 
 ###If you had to pick 3 beers to recommend using only this data, which would you pick?
 
@@ -629,8 +650,7 @@ users_top_rated_beers <- function(df = over_50_reviews, user = NULL){
 
 
 
-### Which of the factors(aroma, taste, appearance, palette) are most important 
-in determining the overall quality of the beer?
+### Which of the factors(aroma, taste, appearance, palette) are most important in determining the overall quality of the beer?
 
 Off the top of my head I can think of two ways to approach this:
 1. I can look at the correlation of the 4 sub factors with the overall review
@@ -744,5 +764,32 @@ reviews_raw %>%
   labs(y = "",
        title = "Distribution of Review Scores",
        subtitle = "Scores all have similar shapes, though Appearance may be a tad narrower")
+
+# A look at percentage of a breweries beers above 15% ABV
+beers_above_fifteen_perc <- reviews_raw %>%
+  filter(!is.na(beer_abv), !is.na(brewery_name))%>%
+  #alter the brewery name again like above to uniquely identify those duplicate brewery names
+  mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
+                               brewery_name))%>%
+  distinct(brewery_name,
+           beer_name,
+           .keep_all = TRUE)%>%
+  group_by(brewery_name)%>%
+  summarise(beers = n(),
+            beers_above_15 = sum(beer_abv >=15),
+            per_abv_15= beers_above_15/beers)
+
+beers_above_fifteen_perc%>%
+  filter(beers >= 10)%>%
+  mutate(brewery_name = fct_reorder(brewery_name, per_abv_15))%>%
+  top_n(25, per_abv_15)%>%
+  ggplot(aes(per_abv_15, brewery_name))+
+  geom_point()+
+  scale_x_continuous(labels = percent_format())+
+  expand_limits(x = .02)+
+  labs(x = "Percentage of Beers Above 15% ABV",
+       y = "",
+       title = "Percentage of Breweries Beers which are greater than 15% ABV",
+       subtitle = "For breweries producing more than 10 different beers")
 ```
 
