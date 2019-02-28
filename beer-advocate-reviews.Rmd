@@ -386,9 +386,9 @@ reviews_raw%>%
   formattable::formattable()
 ```
 
-When we divide the data into reviews of beers > 20% ABV and those < 20% ABV, it's easy to see how uncommon reviews for really high ABV beers are. The vast majority of beers review fall right around the 5% range.
+When we divide the data into reviews of beers > 20% ABV and those < 20% ABV, it's easy to see how uncommon reviews for really high ABV beers are. 
 
-```{r, zoom-in-beer-abv-distributions}
+```{r, greater-20-abv-distribution}
 reviews_raw%>%
   filter(!is.na(beer_abv), beer_abv > 20)%>%
   ggplot(aes(beer_abv))+
@@ -398,7 +398,11 @@ reviews_raw%>%
   labs(x = "ABV",
        y = "",
        title = "Distribution of Beer ABV: Filtering out Beers below 20% ABV")
+```
 
+The vast majority of beers review fall right around the 5% range.
+
+```{r, less-20, abv distribution}
 # Most beers hoover around the 5% range which isn't surprising as a beer drinker
 reviews_raw %>%
   filter(!is.na(beer_abv), beer_abv < 20)%>%
@@ -412,7 +416,7 @@ reviews_raw %>%
        title = "Distribution of Beer ABV: Excluding beers above 20% ABV")
 ```
 
-The question of which brewery produces the strongest beers by ABV has more nuance than it appears at first glance. First, the question asks which brewery produces the strongest **beers** which I am taking to mean it needs to produce more than just one beer that happens to be super strong. Second, how should I measure how strong a breweries beers are? An average of them? Maybe take the median? What about looking at the proportion of beers that a brewery produces that are above some predetermined 'strong' beer threshold? All these methods seem to have merit and are pretty simple and quick. Let's try them out and see what they tell us.
+The question of which brewery produces the strongest beers by ABV has more nuance than it might appear. First, the question asks which brewery produces the strongest **beers** which I am taking to mean it needs to produce more than just one beer that happens to be super strong. Second, how should I measure how strong a breweries beers are? An average of them? Maybe take the median? What about looking at the proportion of beers that a brewery produces that are above some predetermined 'strong' beer threshold? All these methods seem to have merit and are pretty simple and quick. Let's try them out and see what they tell us.
 
 After a little bit of filtering, grouping and aggregation(which you can see in the code fold below), you can see that Schorschbräu ranks at the top of both the mean and median rankings. In fact, the top 4 on both graphs are the same--albeit with one positional swap. One note: Why did I only include breweries that make 4 or more beers? Because the median number of beers produced is 4 and that seemed reasonable.
 
@@ -485,18 +489,19 @@ mean_median_beerabv <- reviews_raw %>%
   # don't want a weighted average, so we grab a df of unique beers for all breweries
   distinct(brewery_id, beer_name, .keep_all = TRUE)%>%
   summarise(mean_abv = mean(beer_abv),
-            median_abv = median(beer_abv))
+            median_abv = median(beer_abv),
+            q75 = quantile(beer_abv, .75),
+            above_10 = (sum(beer_abv>=10)/n())*100)
 ```
 
-Now what if the brewery that produces the strongest beers is the one that has the highest proportion of it's beers above some ABV threshold. We know the mean ABV for a beer is `r round(mean_median_beerabv$mean_abv, 2)`% (median `r round(mean_median_beerabv$median_abv, 2)`%)
-
+Now what if the brewery that produces the strongest beers is the one that has the highest proportion of it's beers above some ABV threshold. We know the mean ABV for a beer is `r round(mean_median_beerabv$mean_abv, 2)`% (median `r round(mean_median_beerabv$median_abv, 2)`%). In fact, the 75th percentile for beer ABV is only `r round(mean_median_beerabv$q75, 2)`%. 10% is where I, personally, start to think a beer is strong and with only `r round(mean_median_beerabv$above_10, 2)`% of beers having greater than or equal to 10% ABV, I think it's a pretty good mark of a 'strong' beer.
 
 
 ```{r}
 
 beers_above_ten_perc <- reviews_raw %>%
   filter(!is.na(beer_abv), !is.na(brewery_name))%>%
-  #alter the brewery name again like above to uniquely identify those duplicate brewery names
+  #alter the brewery name like above to uniquely identify those duplicate brewery names
   mutate(brewery_name = ifelse(brewery_name %in% duplicate_names$brewery_name, paste0(brewery_name, "(", brewery_id, ")"),
                                brewery_name))%>%
   separate(brewery_name, 
@@ -511,28 +516,23 @@ beers_above_ten_perc <- reviews_raw %>%
             per_abv_10 = beers_above_10/beers)
 
 beers_above_ten_perc%>%
-  filter(beers >= 10)%>%
+  filter(beers >= 4)%>%
   mutate(brewery_name = fct_reorder(brewery_name, per_abv_10))%>%
-  top_n(25, per_abv_10)%>%
+  top_n(10, per_abv_10)%>%
   ggplot(aes(per_abv_10, brewery_name))+
   geom_point()+
   scale_x_continuous(labels = percent_format())+
   expand_limits(x = .3)+
   theme(axis.text.y = element_text(size = 6))+
-  labs(x = "Percentage of Beers Above 10% ABV",
+  labs(x = "% of Beers Above 10% ABV",
        y = "",
        title = "What Percentage of Breweries Beers are > 10% ABV",
-       subtitle = "For breweries producing more than 10 different beers")
+       subtitle = "For breweries producing 4 or more beers")
 ```
 
-If we are looking for breweries that produce a lot of high abv beers in general, 
-AleSmith Brewery Company is a good choice with over 70% of the beers they produce
-being 10% ABV or higher.
+Yet again, Schorschbräu sits at the top. They only make 10 different beers, but 90% of them are 10% ABV or higher! For a brewery that produces quite a few more beers, but still cranks out high ABV stuff, AleSmith Brewing Company is up there. They make over 50 different beers and over 70% of them are above 10% ABV.
 
-
-Shorschbrau brewery seems to be head and shoulders above the others in average and median
-abv of the beers they produce. With a little googling, it seems they are well known
-for pushing the limits of strong beers. They even produce one that is 57% abv!
+At the end of the day though, Shorschbrau brewery seems to sit at the top of the 'strong' beer mountain--regardless of the metric I used. With a little googling, it seems they are well known for pushing the limits of strong beers. They even produce one that is 57% ABV!
 ```{r}
 reviews_raw%>%
   filter(!is.na(beer_abv), brewery_name == "Schorschbräu")%>%
@@ -544,17 +544,27 @@ reviews_raw%>%
 
 ###If you had to pick 3 beers to recommend using only this data, which would you pick?
 
-1. A simple way to do a recommendation is to look at reviewers(and beers) that had a good amount
-of reviews. From those you could pick the 3 highest rated beers (by overall rating?)
-2. A recommender system based on matrix factorization
+Again, there's a couple different ways to go about approaching this question. People seem to have beer style preferences, so maybe recommending 3 beers based on what style beer you like would perform well--you like Hefeweizens, here's 3 Hefeweizens that are highly rated you might like. I think this approach probably works OK, but it essentially is just recommending the top rated beers of each style to you. It's possible to get more personalized by building a recommender system which will actually generate more personalized recommendations. Let's build a quick, dirty recommender system here to see how they idea would work and generate some recommendations.
 
-```{r}
+So what's a recommender system? If you've ever used Netflix or Amazon you've encountered them many, many times. A recommendation system takes past user information--in our case beer ratings--to generate predictions for how that user would rate a beer they haven't tried. There are many ways to do this nowadays, but a extremely popular(and good) method is called matrix factorization. If you want a detailed explanation of the math, check out this great [blog post](http://www.albertauyeung.com/post/python-matrix-factorization/), but the intuition is relatively easy to grasp. You build a matrix with users(beer reviewers in this case) as the rows and items(beers) as the columns. Each cell is then the rating that user1 gave beer1, for example. When you flesh out this matrix, there will be empty cells where a user hasn't tried a specific beer yet. The task of matrix factorization is to predict what these missing cells should be --in our case the missing cell corresponds to what we think the user 'would' have rated that beer if they had tried it.
+
+But how do you generate these predictions you ask? You do this by discovering the *latent features* that determine how a user rates items. For instance, there could be latent features describing users who like Hefewizens. Or a feature describing users who like beers associated with a specific geographical area. Or even a feature for users who like German Pilsners that are extra bitter. Essentially, if we have a dataset with 50 users and 50 beers, instead of having to describe each user by the specific beers they like, we break this down down into a smaller set of features that describe their tastes--do they like bitter beers? dark beers? sour beers? strong ABV beers? The details of how you do this algorithmically can be found in the blog post I linked above(spoiler: you use gradient descent to solve for a user association matrix **P** and an item association matrix **Q**).
+
+Luckily, there are several great packages in R that allow for easy implementation of matrix factorization. First I need to do a bit of cleanup. Most reviewers in our dataset are reviewing very few beers. This means they would have a lot of empty cells in their matrix and it makes it tough to generate good predictions.
+
+```{r, number-of-reviews-histogram}
 reviews_raw %>%
   count(review_profilename, sort = TRUE)%>%
   ggplot(aes(n))+
-  geom_histogram()+
-  scale_x_log10()
+  geom_histogram(fill = 'lightblue', color = 'white')+
+  scale_x_log10()+
+  labs(x = "# of Reviews",
+       y = "# of Reviewers",
+       title = "How many reviews are reviewers posting?")
+```
 
+I'm filtering the dataset to only include reviewers who have reviewed at least 50 beers and only include beers with at least 100 reviews. With this dataset, I assign new indexes for user_id and beer_id (starting at 1) and then build a sparse triplet matrix--that's just a fancy way of saying I build a matrix where I only include user and beer combinations that actually have a rating and I make sure it's of the form (user_id, beer_id, rating).
+```{r, create-sparse-triplet-matrix}
 # filter to reviewers who have reviewed above 50 beers and beers with greater than 100 reviews
 over_50_reviews <- reviews_raw%>%
   add_count(review_profilename)%>%
@@ -565,37 +575,54 @@ over_50_reviews <- reviews_raw%>%
          !is.na(beer_name),
          !is.na(review_profilename),
          !is.na(review_overall))%>%
-  # add new user_id(starting at 1) and beer_id(starting at 1)
+  # add new user_id(starting at 1) and beer_id(starting at 1): needed for recosystem triplet matrix
   mutate(., user_id = group_indices(., review_profilename),
          beer_id = group_indices(., beer_beerid))
 
 
+# recosystem requires a triplet matrix of the form (user, beer, rating)
 user_beer_triplet <- over_50_reviews %>%
   select(user_id, beer_id, review_overall)
+```
 
+To train the actual model I need to specify the inputs for the training function and then set the parameters. The main parameter to focus on is *dim*. This determines the number of latent factors to fit. In playing around, I found that the default of 10 was too few factors. It gave reasonable recommendations, but it was essentially recommending the same beers to everyone, regardless of personal preferences. After a bit of tinkering, I decided to use 200 and see how specific the recommendations would get. You could probably go higher, but the model takes longer to fit and the results were pretty good at 200 already.
+```{r, train-reco-system, message = FALSE}
 library(recosystem)
+#create recosystem object
 r <- Reco()
+
+# training set is the set of items that actually were rated. In a more advanced system I'd have a separate train/test split for
+# the training of the model
+# data_memory specifics the inputs to the $train and $predict functions
 train_set = data_memory(user_index = user_beer_triplet$user_id,
                         item_index = user_beer_triplet$beer_id,
                         rating = user_beer_triplet$review_overall,
                         index1 = TRUE)
+
 # dim parameter controls the number of latent factors in the model.
 # Default dim = 10 and that's too few--you end up having pretty much
 # the same beers recommended to everyone. There is a balancing to be done here
 # of creating too many latent factors and essentially overfitting and too few
 # and giving really generic recommendations
-r$train(train_set, opts = list(dim = 50,                        
+r$train(train_set, opts = list(dim = 200,                        
                                costp_l1 = 0, costp_l2 = 0.01,   
                                costq_l1 = 0, costq_l2 = 0.01,   
                                niter = 20,                      
                                nthread = 6))
+```
+The model runs through 20 iterations and the RMSE is still dropping. You can really easily overfit this model. If you do 300 or even 400 latent factors the RMSE will continue to drop. In a full scale implementation, I would be using a training and testing set and cross validation to choose the number of latent factors that minimizes the RMSE on the test set. Here, I'm simply doing a proof of concept, so we are playing it a bit fast and loose.
 
+Once the model is trained, I can generate predictions for beers a user has not reviewed yet. Here I am just selecting a random user(but the functionality is there to specify one) and then building a matrix if that user and all distinct beers. I feed that into recosystems predict function and it will generate a prediction for that user for each beer. Since some of those beers have already been reviewed by the user, I filter those out(and those could be used to measure how well the model is doing later) and then return the top 3 rated beers for the user. The helper functions in the code below allow me to generate predictions for a user and then quickly pull up the top beers for that user and gauge how good the models predictions were.
 
-top_three_beers_for_user <- function(user_beer_sparse = user_beer_triplet, user_id = NULL){
+```{r, recommendation-and-helper-functions}
+top_three_beers_for_user <- function(reco_object = r, user_beer_sparse = user_beer_triplet, user_id = NULL){
+# inputs: 
+#       reco_object - the r object recosystem created in training the model
+#       user_beer_sparse - triplet matrix used to build prediction matrix
+#       user_id - specific user to recommend beers for; defaults to randomly selected user
   
-  # for this proof of concept implementation, just grabbing a random user_id,
-  # but I want to be able to grab a specific user too which is what the if statement
-  # is for.
+  
+  # Default to grabbing a random user_id. If specified, use given user_id
   if (is.null(user_id)){
     user <- sample.int(n_distinct(user_beer_sparse$beer_id), 1)
   } else{
@@ -607,17 +634,18 @@ top_three_beers_for_user <- function(user_beer_sparse = user_beer_triplet, user_
   # grab the number of unique beers to build grid for prediction
   beer <- 1:n_distinct(user_beer_sparse$beer_id)
   
-  #build grid of beers to predict for user
+  # build grid of beers to predict for user
   # this doesn't filter out beers they already have reviewed. it predicts them 
   # anyway.This predict can be used later to gauge the accuracy/usefulness of
   # the recommender.
-  
   pred <- expand.grid(user = user, beer = beer)
+  
   # build recosystem object used for prediction
   prediction_set <- data_memory(pred$user, 
                                 pred$beer, 
                                 index1 = TRUE)
-  # do the actual predictions and add to prediction grid
+  
+  # generate predictions and add to prediction grid
   pred$rating <- r$predict(prediction_set, out_memory())
   
   # df of beers the specific user has reviewed
@@ -633,21 +661,29 @@ top_three_beers_for_user <- function(user_beer_sparse = user_beer_triplet, user_
     # the prediction df is just id numbers and a rating prediction
     inner_join((over_50_reviews%>%
                  distinct(beer_id, .keep_all = TRUE)%>%
-                  select(beer_id, beer_name, beer_style, brewery_name)), by = c("beer" = "beer_id"))%>%
+                  select(beer_id, beer_name, beer_style)), by = c("beer" = "beer_id"))%>%
     top_n(3, rating)
 }
 
 users_top_rated_beers <- function(df = over_50_reviews, user = NULL){
-  # function takes a specific user_id and returns the style, name and rating of their top 10 beers
+  # function takes a specific user_id and returns the style, name and rating of their top 10(ties included) beers
   df%>%
     filter(user_id == user)%>%
-    select(user_id, beer_id, beer_name, beer_style, review_overall)%>%
+    select(user_id, beer_id, beer_name, brewery_name, beer_style, review_overall)%>%
     top_n(10, review_overall)%>%
     arrange(desc(review_overall))
 }
 
 ```
 
+Picking two random users from the dataset you can see the different predictions for each user.
+```{r, sample-predictions}
+top_three_beers_for_user(user_id = 3831)
+users_top_rated_beers(user = 3831)
+
+top_three_beers_for_user(user_id = 270)
+users_top_rated_beers(user = 270)
+```
 
 
 ### Which of the factors(aroma, taste, appearance, palette) are most important in determining the overall quality of the beer?
