@@ -585,8 +585,8 @@ user_beer_triplet <- over_50_reviews %>%
   select(user_id, beer_id, review_overall)
 ```
 
-To train the actual model I need to specify the inputs for the training function and then set the parameters. The main parameter to focus on is *dim*. This determines the number of latent factors to fit. In playing around, I found that the default of 10 was too few factors. It gave reasonable recommendations, but it was essentially recommending the same beers to everyone, regardless of personal preferences. After a bit of tinkering, I decided to use 200 and see how specific the recommendations would get. You could probably go higher, but the model takes longer to fit and the results were pretty good at 200 already.
-```{r, train-reco-system, message = FALSE}
+To train the actual model I need to specify the inputs for the training function and then set the parameters. The main parameter to focus on is *dim*. This determines the number of latent factors to fit. In playing around, I found that the default of 10 was too few factors. It gave reasonable recommendations, but it was essentially recommending the same beers to everyone, regardless of personal preferences. After a bit of tinkering, I decided to use 200 and see how specific the recommendations would get. You could probably go higher, but the model takes longer to fit and the results were pretty good at 200 already. The code for training and generating predictions for the recommender is in the code chunk below and I'd encourage you do check it out--even though it's basically straight from the documentation.
+```{r, train-reco-system, message = FALSE, eval = FALSE, echo = TRUE}
 library(recosystem)
 #create recosystem object
 r <- Reco()
@@ -609,18 +609,37 @@ r$train(train_set, opts = list(dim = 200,
                                costq_l1 = 0, costq_l2 = 0.01,   
                                niter = 20,                      
                                nthread = 6))
+
+# Save model since it takes some time to generate and I need it later
+saveRDS(r, "beer_reco_model.RDS")
+
+# generate predictions for all users ahead of time and save that object
+
+# build a grid of all user beer combinations to feed into recosystem
+beers <- 1:n_distinct(user_beer_triplet$beer_id)
+users <- 1:n_distinct(user_beer_triplet$user_id)
+pred <- expand.grid(user = users, beer = beers)
+# create recosystem specific data object
+prediction_set <- data_memory(pred$user,
+                              pred$beer,
+                              index1 = TRUE)
+# generate predictions for every user/beer combo
+pred$rating <- r$predict(prediction_set, out_memory())
+saveRDS(pred, "beer_reco_predictions.RDS")
+
+
 ```
 The model runs through 20 iterations and the RMSE is still dropping. You can really easily overfit this model. If you do 300 or even 400 latent factors the RMSE will continue to drop. In a full scale implementation, I would be using a training and testing set and cross validation to choose the number of latent factors that minimizes the RMSE on the test set. Here, I'm simply doing a proof of concept, so we are playing it a bit fast and loose.
 
-Once the model is trained, I can generate predictions for beers a user has not reviewed yet. Here I am just selecting a random user(but the functionality is there to specify one) and then building a matrix if that user and all distinct beers. I feed that into recosystems predict function and it will generate a prediction for that user for each beer. Since some of those beers have already been reviewed by the user, I filter those out(and those could be used to measure how well the model is doing later) and then return the top 3 rated beers for the user. The helper functions in the code below allow me to generate predictions for a user and then quickly pull up the top beers for that user and gauge how good the models predictions were.
-
+With the model training and predictions precomputed for all users, it's time to select some users and see if the results make sense. I built a couple helper functions to help view the results. The first takes the prediction dataframe and filters out beers that user already reviewed and returns the top 3 beers that recommendation system predicted for them. The second function grabs the top 10 beers that that user already reviewed so we can compare and see if the results are sensible.
 ```{r, recommendation-and-helper-functions}
-top_three_beers_for_user <- function(reco_object = r, user_beer_sparse = user_beer_triplet, user_id = NULL){
+predictions <- readRDS("~/Playground/Playground/beer_reco_predictions.RDS")
+
+top_three_beers_for_user <- function(preds = predictions, user_beer_sparse = user_beer_triplet, user_id = NULL){
 # inputs: 
-#       reco_object - the r object recosystem created in training the model
-#       user_beer_sparse - triplet matrix used to build prediction matrix
+#       preds - precomputed predictions file with predictions for all users
+#       user_beer_sparse - user_beer matrix used to get beers specific user has tried
 #       user_id - specific user to recommend beers for; defaults to randomly selected user
-  
   
   # Default to grabbing a random user_id. If specified, use given user_id
   if (is.null(user_id)){
@@ -630,39 +649,21 @@ top_three_beers_for_user <- function(reco_object = r, user_beer_sparse = user_be
     stopifnot(user_id != 0)
     user <- user_id
   }
-  
-  # grab the number of unique beers to build grid for prediction
-  beer <- 1:n_distinct(user_beer_sparse$beer_id)
-  
-  # build grid of beers to predict for user
-  # this doesn't filter out beers they already have reviewed. it predicts them 
-  # anyway.This predict can be used later to gauge the accuracy/usefulness of
-  # the recommender.
-  pred <- expand.grid(user = user, beer = beer)
-  
-  # build recosystem object used for prediction
-  prediction_set <- data_memory(pred$user, 
-                                pred$beer, 
-                                index1 = TRUE)
-  
-  # generate predictions and add to prediction grid
-  pred$rating <- r$predict(prediction_set, out_memory())
-  
   # df of beers the specific user has reviewed
   users_beers <- user_beer_sparse %>%
     filter(user_id %in% user)
-  
   # return top three beers by predicted rating
   # remove predictions for beers user already reviewed
-  pred %>%
-    filter(!(beer %in% users_beers$beer_id))%>%
+  preds %>%
+    filter(user == user_id, !(beer %in% users_beers$beer_id))%>%
     arrange(desc(rating))%>%
     # this join allows me to get the beer name, style and brewery name
     # the prediction df is just id numbers and a rating prediction
     inner_join((over_50_reviews%>%
                  distinct(beer_id, .keep_all = TRUE)%>%
                   select(beer_id, beer_name, beer_style)), by = c("beer" = "beer_id"))%>%
-    top_n(3, rating)
+    top_n(3, rating)%>%
+    formattable::formattable()
 }
 
 users_top_rated_beers <- function(df = over_50_reviews, user = NULL){
@@ -671,12 +672,12 @@ users_top_rated_beers <- function(df = over_50_reviews, user = NULL){
     filter(user_id == user)%>%
     select(user_id, beer_id, beer_name, brewery_name, beer_style, review_overall)%>%
     top_n(10, review_overall)%>%
-    arrange(desc(review_overall))
+    arrange(desc(review_overall))%>%
+    formattable::formattable()
 }
-
 ```
 
-Picking two random users from the dataset you can see the different predictions for each user.
+Picking two random users from the dataset you can see the different predictions for each user. User 3831 is recommended 
 ```{r, sample-predictions}
 top_three_beers_for_user(user_id = 3831)
 users_top_rated_beers(user = 3831)
