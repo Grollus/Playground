@@ -16,9 +16,19 @@ knitr::opts_chunk$set(echo = TRUE,
                       out.height = "90%")
 library(ggplot2)
 theme_set(theme_minimal())
+my_theme_tweaks <- function(){
+  theme(axis.text.y = element_text(size = 6),
+        axis.text.x = element_text(size = 6),
+        plot.title = element_text(size = 12),
+        plot.subtitle = element_text(size = 10),
+        axis.title.x = element_text(size = 8),
+        axis.title.y = element_text(size = 8),
+        legend.text = element_text(size = 8))
+}
 ```
 
-```{r data-load, results = FALSE, message = FALSE, include = TRUE}
+```{r data-package-load, results = FALSE, message = FALSE, include = TRUE}
+library(relaimpo)
 library(tidyverse)
 library(magrittr)
 library(scales)
@@ -107,12 +117,13 @@ reviews_per_beer %>%
   geom_vline(data = reviews_measures, aes(xintercept = value, color = key), lty = 2)+
   # adjust y axis limits for 'better' looking graph
   scale_y_continuous(limits = c(0,25000), expand = c(0,0))+
-  labs(color = "")+
   theme(legend.position = c(.75, .87))+
   labs(x = "# of Reviews",
        y = "# of beers",
        title = "Number of reviews received by beers",
-       subtitle = "~80% of beers receive 10 or fewer reviews")
+       subtitle = "~80% of beers receive 10 or fewer reviews",
+       color = "")+
+  my_theme_tweaks()
   
 ```
 
@@ -149,7 +160,8 @@ beers_per_brewery %>%
        y = "# of Breweries",
        title = "Number of Unique Beers Produced by Breweries",
        subtitle = paste0(percent(beers_per_brewery$produce_one[1]), " of breweries in the dataset only produce 1 beer"),
-       color = "")
+       color = "")+
+  my_theme_tweaks()
 
 ```
 
@@ -264,11 +276,11 @@ beer_style_conf_int%>%
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
                      xmax = conf.high))+
-  theme(axis.text.y = element_text(size = 6))+
   labs(x = "Overall Review Score",
        y = "",
        title = "Top 20 Beer Styles",
-       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")+
+  my_theme_tweaks()
 
 ```
 
@@ -288,12 +300,12 @@ beer_style_conf_int%>%
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
                      xmax = conf.high))+
-  theme(axis.text.y = element_text(size = 6))+
   scale_x_continuous(limits = c(2.35, 3.9), breaks = seq(from = 2.4, to = 4, by = .1), expand = c(0,0))+
   labs(x = "Overall Review Score",
        y = "",
        title = "Bottom 20 Beer Styles",
-       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")+
+  my_theme_tweaks()
 
 ```
 
@@ -331,11 +343,11 @@ beer_style_conf_int_by_reviewid%>%
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
                      xmax = conf.high))+
-  theme(axis.text.y = element_text(size = 6))+
   labs(x = "Overall Review Score",
        y = "",
        title = "Top 20 Beer Styles: No filtering to remove beers with few reviews",
-       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")+
+  my_theme_tweaks()
 ```
 The results are pretty similar to the other approach with two major differences. First, the confidence intervals are narrower for both graphs. This is expected because of how I did the grouping. Instead of having, say, 100 beers to base the estimates off of, these graphs may use thousands of reviews--remember all those one review beers we filtered out before? With all that additional data, I expected the confidence intervals to narrow. Second, we see a handful of new styles present on each graph. Lambic - Unblended, Gose and Roggenbier all didn't make the cut before, but are present now. 
 
@@ -349,11 +361,11 @@ beer_style_conf_int_by_reviewid%>%
   geom_point()+
   geom_errorbarh(aes(xmin = conf.low,
                      xmax = conf.high))+
-  theme(axis.text.y = element_text(size = 6))+
   labs(x = "Overall Review Score",
        y = "",
        title = "Bottom 20 Beer Styles: No filtering to remove beers with few reviews",
-       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")
+       subtitle = "Estimated Review Score of Beer Styles with 95% Confidence Intervals")+
+  my_theme_tweaks()
 ```
 
 
@@ -375,7 +387,8 @@ reviews_raw %>%
                      breaks = seq(from = 0, to = 60, by = 10))+
   labs(x = "ABV",
        y = "",
-       title = "Distribution of Beer ABV %")
+       title = "Distribution of Beer ABV %")+
+  my_theme_tweaks()
 
 # Only 18 beers in the dataset are about 20% abv
 reviews_raw%>%
@@ -397,7 +410,8 @@ reviews_raw%>%
   scale_x_continuous(labels = scales::number_format(suffix = "%"))+
   labs(x = "ABV",
        y = "",
-       title = "Distribution of Beer ABV: Filtering out Beers below 20% ABV")
+       title = "Distribution of Beer ABV: Filtering out Beers below 20% ABV")+
+  my_theme_tweaks()
 ```
 
 The vast majority of beers review fall right around the 5% range.
@@ -413,7 +427,8 @@ reviews_raw %>%
                      expand = c(0,0))+
   labs(x = "ABV",
        y = "",
-       title = "Distribution of Beer ABV: Excluding beers above 20% ABV")
+       title = "Distribution of Beer ABV: Excluding beers above 20% ABV")+
+  my_theme_tweaks()
 ```
 
 The question of which brewery produces the strongest beers by ABV has more nuance than it might appear. First, the question asks which brewery produces the strongest **beers** which I am taking to mean it needs to produce more than just one beer that happens to be super strong. Second, how should I measure how strong a breweries beers are? An average of them? Maybe take the median? What about looking at the proportion of beers that a brewery produces that are above some predetermined 'strong' beer threshold? All these methods seem to have merit and are pretty simple and quick. Let's try them out and see what they tell us.
@@ -459,12 +474,12 @@ average_abv %>%
   top_n(10, avg_abv)%>%
   ggplot(aes(avg_abv, brewery_name))+
   geom_point()+
-  theme(axis.text.y = element_text(size = 6))+
   scale_x_continuous(labels = scales::number_format(suffix = "%"))+
   labs(x = "ABV",
        y = "", 
        title = "Breweries Producing the 'Strongest' Beers: By Mean",
-       subtitle = "Only Breweries producing 4 or more different beers")
+       subtitle = "Only Breweries producing 4 or more different beers")+
+  my_theme_tweaks()
 
 average_abv %>%
   distinct(brewery_name, .keep_all = TRUE)%>%
@@ -473,12 +488,12 @@ average_abv %>%
   top_n(10, med_abv)%>%
   ggplot(aes(med_abv, brewery_name))+
   geom_point()+
-  theme(axis.text.y = element_text(size = 6))+
   scale_x_continuous(labels = scales::number_format(suffix = "%"))+
   labs(x = "ABV",
        y = "", 
        title = "Breweries Producing the 'Strongest' Beers: By Median",
-       subtitle = "Only Breweries producing 4 or more different beers")
+       subtitle = "Only Breweries producing 4 or more different beers")+
+  my_theme_tweaks()
 ```
 
 
@@ -523,11 +538,11 @@ beers_above_ten_perc%>%
   geom_point()+
   scale_x_continuous(labels = percent_format())+
   expand_limits(x = .3)+
-  theme(axis.text.y = element_text(size = 6))+
   labs(x = "% of Beers Above 10% ABV",
        y = "",
        title = "What Percentage of Breweries Beers are > 10% ABV",
-       subtitle = "For breweries producing 4 or more beers")
+       subtitle = "For breweries producing 4 or more beers")+
+  my_theme_tweaks()
 ```
 
 Yet again, Schorschbräu sits at the top. They only make 10 different beers, but 90% of them are 10% ABV or higher! For a brewery that produces quite a few more beers, but still cranks out high ABV stuff, AleSmith Brewing Company is up there. They make over 50 different beers and over 70% of them are above 10% ABV.
@@ -542,7 +557,7 @@ reviews_raw%>%
   formattable::formattable()
 ```
 
-###If you had to pick 3 beers to recommend using only this data, which would you pick?
+### If you had to pick 3 beers to recommend using only this data, which would you pick?
 
 Again, there's a couple different ways to go about approaching this question. People seem to have beer style preferences, so maybe recommending 3 beers based on what style beer you like would perform well--you like Hefeweizens, here's 3 Hefeweizens that are highly rated you might like. I think this approach probably works OK, but it essentially is just recommending the top rated beers of each style to you. It's possible to get more personalized by building a recommender system which will actually generate more personalized recommendations. Let's build a quick, dirty recommender system here to see how they idea would work and generate some recommendations.
 
@@ -560,7 +575,8 @@ reviews_raw %>%
   scale_x_log10()+
   labs(x = "# of Reviews",
        y = "# of Reviewers",
-       title = "How many reviews are reviewers posting?")
+       title = "How many reviews are reviewers posting?")+
+  my_theme_tweaks()
 ```
 
 I'm filtering the dataset to only include reviewers who have reviewed at least 50 beers and only include beers with at least 100 reviews. With this dataset, I assign new indexes for user_id and beer_id (starting at 1) and then build a sparse triplet matrix--that's just a fancy way of saying I build a matrix where I only include user and beer combinations that actually have a rating and I make sure it's of the form (user_id, beer_id, rating).
@@ -633,6 +649,7 @@ The model runs through 20 iterations and the RMSE is still dropping. You can rea
 
 With the model training and predictions precomputed for all users, it's time to select some users and see if the results make sense. I built a couple helper functions to help view the results. The first takes the prediction dataframe and filters out beers that user already reviewed and returns the top 3 beers that recommendation system predicted for them. The second function grabs the top 10 beers that that user already reviewed so we can compare and see if the results are sensible.
 ```{r, recommendation-and-helper-functions}
+#Look into using 'here' package for easier paths here
 predictions <- readRDS("~/Playground/Playground/beer_reco_predictions.RDS")
 
 top_three_beers_for_user <- function(preds = predictions, user_beer_sparse = user_beer_triplet, user_id = NULL){
@@ -663,6 +680,7 @@ top_three_beers_for_user <- function(preds = predictions, user_beer_sparse = use
                  distinct(beer_id, .keep_all = TRUE)%>%
                   select(beer_id, beer_name, beer_style)), by = c("beer" = "beer_id"))%>%
     top_n(3, rating)%>%
+    select(-rating, -beer)%>%
     formattable::formattable()
 }
 
@@ -670,18 +688,23 @@ users_top_rated_beers <- function(df = over_50_reviews, user = NULL){
   # function takes a specific user_id and returns the style, name and rating of their top 10(ties included) beers
   df%>%
     filter(user_id == user)%>%
-    select(user_id, beer_id, beer_name, brewery_name, beer_style, review_overall)%>%
+    select(user_id, beer_id, beer_name, beer_style, review_overall)%>%
     top_n(10, review_overall)%>%
     arrange(desc(review_overall))%>%
+    select(-review_overall, -beer_id)%>%
     formattable::formattable()
 }
 ```
 
-Picking two random users from the dataset you can see the different predictions for each user. User 3831 is recommended 
-```{r, sample-predictions}
+Looking at the predictions for two random reviewers in the dataset, you can see that, as expected, they are given different recommendations. User 3831 is recommended an English Bitter, a Red Ale and a Rye which seems to make sense since they have a Rye and a couple Red Ales in their highest rated beers. 
+```{r, sample-predictions-one}
 top_three_beers_for_user(user_id = 3831)
 users_top_rated_beers(user = 3831)
+```
 
+User 270 was recommended an Imperial IPA, a Wild Ale and a Hefeweizen. This again makes since as you can see they rate *many* Imperial IPA's highly. The recommender is also picking up that user 270 seems to like fruit forward beers--the Wild Ale and the Wisconsin Belgian Red are both fruit forward. It might even be picking up on the fact that beer drinkers who like Witbier's and Wheat Ale's tend to like Hefeweizens. It's pretty remarkable what a well tuned recommender system can predict and even the simple one here seems to do a pretty good job of generating reasonable recommendations for the top 3 beers for a particular reviewer.
+
+```{r, sample-predictions-two}
 top_three_beers_for_user(user_id = 270)
 users_top_rated_beers(user = 270)
 ```
@@ -689,45 +712,96 @@ users_top_rated_beers(user = 270)
 
 ### Which of the factors(aroma, taste, appearance, palette) are most important in determining the overall quality of the beer?
 
-Off the top of my head I can think of two ways to approach this:
-1. I can look at the correlation of the 4 sub factors with the overall review
-score of a beer.
-2. I can build a linear model to see which factors are significant when predicting 
-the overall quality of a beer.
-  2a. This could be problematic: Think Bayesian Richard McElrith
-  
+This is another fun question because--yet again--there's a lot of different ways you could reason about finding an answer. Initially, I wanted to use PCA. I figured I could use it to see which factor most closely corresponded to the first principle component--which is where, by definition, most of the variance occurs. But after thinking it over some more, I decided not to use this approach. Typically PCA is used when you have a lot of variables that are in play. Here, I'm only really looking at 4. While I think you could cast the problem in a way to 'use' PCA, I don't know that it's the correct approach, so I'm using other techniques here. I'd love to see how someone else would approach this problem using PCA though, so if you get a hankering to do that, please shoot me a link to your analysis in the comments!
+
+Instead of PCA, I'm going to do two things: 
+
+1) Examine the correlations between the subfactors(taste, palette, aroma, appearance) and the overall review scores
+2) Fit a linear model and see which factors are most important to the model.
 
 
-```{r}
+#### They're correlated you say?
+
+
+```{r, subfactors-correlation-analysis}
 library(corrr)
-reviews_raw %>%
+cor_results <- reviews_raw %>%
   select(review_appearance, review_aroma, review_palate, review_taste, review_overall)%>%
   correlate()
+
+cor_results%>%
+  shave()%>%
+  rplot(shape = 15, colors = viridis::plasma(n = 6))
+
+cor_results%>%
+  # shave and fashion prune the results to a triangular table since values are mirrored
+  shave()%>%
+  fashion()%>%
+  formattable::formattable()
 ```
 
+The highest correlations appear between taste and overall and palate and overall. Intuitively this makes sense--how a beer tastes probably plays a pretty big role in how the beer is scored overall. Aroma and appearance are relatively unimportant it seems, but it's important to note that aroma is highly correlated with taste--after all, smell plays a huge role in how we perceive food. 
 
-```{r}
-m1 <- lm(review_overall~ review_appearance + review_aroma + review_taste + review_palate, data = reviews_raw)
+It's also useful to make a scatterplot showing the relationship of appearance or taste to overall scores. Below you see a random sample of the reviews with a simple line fit to the relationship between that facet and the overall score. You can see how taste is much more tightly clustered(thus the higher correlation), while appearance is quite a bit more spread out.
+
+
+```{r, subfactor-scatterplot-with-lm}
+reviews_raw%>%
+  select(review_overall, review_aroma, review_appearance, review_taste, review_palate)%>%
+  # remove reviews with zeros
+  filter(review_overall > 0)%>%
+  # plotting 1.5M reviews takes too long and you get the same idea with 1,500 points
+  sample_frac(size = .001)%>%
+  rename(Aroma = review_aroma, Appearance = review_appearance, Taste = review_taste, Palate = review_palate)%>%
+  # gather so I can use a facet plot
+  gather(key, value, -review_overall)%>%
+  ggplot(aes(x = value, y = review_overall, alpha = .1))+
+  geom_point()+
+  # without jitter it just looks like a grid since values are discrete
+  geom_jitter()+
+  facet_wrap(~key, scales = "free_x")+
+  # fits a linear model of review_overall ~ Appearance/taste/etc
+  geom_smooth(method = "lm", se = TRUE, color = 'red')+
+  theme(legend.position = 'none')+
+  labs(x = "",
+       y = "Overall Score",
+       title = "How Appearance, Aroma, Palate and Taste Affect Overall Beer Scores")+
+  my_theme_tweaks()
+```
+
+#### Linear model for feature importance
+This is all useful, if not completely satisfying information. Maybe we can glean a little more insight by building a linear model to see how things line up. Fitting linear models is really easy in R with the base **lm** function. There are many more sophisticated methods and packages for building/plotting/interpretting/overanalysing linear models in R, but for my purposes here the base **lm** function works just fine.
+
+```{r, linear-model-review-overall}
+# get rid of 7 reviews that are zero for some reason--pretty sure it's supposed to be 1-5
+reviews_zeros_removed <- reviews_raw %>%
+  select(review_overall, review_aroma, review_appearance, review_taste, review_palate)%>%
+  filter(review_overall > 0)
+
+# Build simple linear model with no interaction effects
+m1 <- lm(review_overall~ review_taste + review_aroma + review_appearance + review_palate, data = reviews_zeros_removed)
 summary(m1)
-
-m2 <- lm(review_overall ~ review_appearance, data = reviews_raw)
-summary(m2)
-m3 <- lm(review_overall ~ review_aroma, data = reviews_raw)
-summary(m3)
-m4 <- lm(review_overall ~ review_taste, data = reviews_raw)
-summary(m4)
-m5 <- lm(review_overall ~ review_palate, data = reviews_raw)
-summary(m5)
-
-
 ```
 
+This linear model uses ordinary least squares regression to predict review_overall from the sub-reviews--taste, aroma, appearance and palate. With an R-squared of just .658, this model isn't super accurate, but it's good enough for our purposes. I just want to see which factor is most important to the overall review score after all. It's tempting to just look at the coefficient values and say whichever is larger is more important, but that's [not really true](https://stats.stackexchange.com/a/202846). Variables on different scales, variables with wildly different variances or multi-collinearity between variables will all make determining feature importance from the coefficient values problematic(if not outright wrong).
 
+Luckily, some very smart statisticians built a package called [**relaimpo**](https://cran.r-project.org/web/packages/relaimpo/relaimpo.pdf) that will calculate more useful feature importance metrics. It turns out this is a really slippery and complicated area of statistics, so I'd encourage you to read about it [here](https://prof.beuth-hochschule.de/fileadmin/prof/groemp/downloads/amstat07mayp139.pdf) if you'd like to see how a statistician thinks about this area. There are 8 different metrics you can use in *relaimpo*, but they all basically give the same answer. I've included 5 below(*lmg* and *betasq* seem to be the most commonly used metrics) and you can see that each metric under'Relative importance metrics' gives the same breakdown of feature importance:
 
-
-
+1) Taste
+2) Palate
+3) Aroma
+4) Appearance
+```{r, feature-importance}
+# calc.relimp calculates several measures that give the relative importance of the variables in a model.
+metrics <- calc.relimp(m1, type = c("lmg", "first", "last", "betasq", "car"))
+metrics
+```
+There is quite a bit of difference in how *much* more important taste is compared to appearance, but the ranking is the same regardless of the metric used--**taste** is most important in determining the overall review of a beer and appearance is least important. 
 
 ### If I enjoy a beer due to its aroma and appearance, which beer style should I try?
+
+So what if we aren't the typical beer drinker and we really care most about the aroma and appearance of a beer. How should I determine what to drink then?
+
 Again, there are several ways to approach this question.
 1. Look at which beers styles have high aroma and appearance reviews and recommend those.
 2. Look at aroma and appearance above some threshold value and then recommend the most
@@ -744,19 +818,28 @@ aroma_and_appearance <- reviews_raw %>%
             avg_appearance = mean(review_appearance),
             avg_overall = mean(review_overall))%>%
   ungroup()%>%
-  mutate(total_aroma_appear = avg_aroma + avg_appearance,
-         avg_aroma_appear = (avg_aroma + avg_appearance)/2)%>%
-  arrange(desc(avg_aroma_appear), desc(avg_overall))
+  mutate(avg_aroma_appear = (avg_aroma + avg_appearance)/2)
 
 
 aroma_and_appearance %>%
   mutate(beer_style = fct_reorder(beer_style, avg_aroma_appear))%>%
   top_n(25, avg_aroma_appear)%>%
-  ggplot(aes(avg_aroma_appear, beer_style))+
+  select(-avg_overall)%>%
+  gather(key, value, -beer_style, -reviews)%>%
+  ggplot(aes(x = value, y = beer_style, color = key, size = reviews, alpha = .3))+
   geom_point()+
-  geom_point(aes(x = avg_overall), color = 'red', alpha = .3)+
-  labs(x = "Average of Aroma and Appearance Scores",
-       y = "")
+  guides(size = FALSE,
+         alpha = FALSE,
+         color = guide_legend(override.aes = list(size = 4,
+                                                  alpha = .4)))+
+  theme(legend.position = c(.86, .26))+
+  labs(x = "Average Rating",
+       y = "",
+       color = "",
+       title = "Which Beer Styles Receive the Highest Aroma and Appearance Ratings?",
+       subtitle = "Ordered by the Average of a Styles Average Aroma and Appearance Ratings\n(Larger Points equal more reviews)")+
+  my_theme_tweaks()
+  
 
 aroma_and_appearance %>%
   mutate(beer_style = fct_reorder(beer_style, avg_aroma))%>%
@@ -785,15 +868,16 @@ fragrant beers with rich, pleasing appearances in the glass.
 This section includes additional code that was used--mainly to explore the data--but that didn't make it past the cutting stage of
 report writing. It's included because it's interesting, if not directly relevant to the analysis. 
 ```{r, code-appendix}
+library(dplyr)
 # A look at how often beers from the 'macro' breweries are reviewed
 reviews_raw%>%
   filter(brewery_name %in% c("Anheuser-Busch", "Coors Brewing Company", "Miller Brewing Co.", "Heineken Nederland B.V."))%>%
   count(brewery_id, brewery_name, sort = TRUE)
 
 # Plotting distribution of 5 different review categories
-reviews_raw %>%
-  select(starts_with('review'), -review_profilename)%>%
-  gather(review_type, score, -review_time)%>%
+reviews_zeros_removed %>%
+  select(starts_with('review'))%>%
+  gather(review_type, score)%>%
   ggplot(aes(score))+
   geom_histogram()+
   facet_wrap(~review_type)+
