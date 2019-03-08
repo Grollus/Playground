@@ -563,13 +563,15 @@ reviews_raw%>%
 
 ## If you had to pick 3 beers to recommend using only this data, which would you pick?
 
-Again, there are a couple different ways to go about approaching this question. People seem to have beer style preferences, so maybe recommending 3 beers based on what style beer you like would perform well--you like Hefeweizens, here's 3 Hefeweizens that are highly rated you might like. I think this approach probably works OK, but it essentially is just recommending the top rated beers of each style to you. It's possible to get more personalized by building a recommender system which will actually generate more personalized recommendations. Let's build a quick, dirty recommender system here to see how they idea would work and generate some recommendations.
+Yet again, there are several ways you could approach this question. People seem to have beer style preferences, so maybe recommending 3 beers based on what style beer you like would perform well--you like Hefeweizens, here are 3 Hefeweizens that you might like. I think this approach probably works OK, but it's just recommending the top rated beers of each style to you. It's possible to get more personalized recommendations by building a recommender system. I'm not sure I'd take this approach if I had a strict time limit for this take home test, but since I'm blogging about the process, I'm taking the fun approach and build a recommender system.
 
-So what's a recommender system? If you've ever used Netflix or Amazon you've encountered them many, many times. A recommendation system takes past user information--in our case beer ratings--to generate predictions for how that user would rate a beer they haven't tried. There are many ways to do this nowadays, but a extremely popular(and good) method is called matrix factorization. If you want a detailed explanation of the math, check out this great [blog post](http://www.albertauyeung.com/post/python-matrix-factorization/), but the intuition is relatively easy to grasp. You build a matrix with users(beer reviewers in this case) as the rows and items(beers) as the columns. Each cell is then the rating that user1 gave beer1, for example. When you flesh out this matrix, there will be empty cells where a user hasn't tried a specific beer yet. The task of matrix factorization is to predict what these missing cells should be --in our case the missing cell corresponds to what we think the user 'would' have rated that beer if they had tried it.
+So what is a recommender system anyway? If you've ever used Netflix or Amazon you've encountered them many, many times. A recommendation system takes past user information--in our case beer ratings--to generate predictions for how that user would rate a beer they haven't tried. There are many ways to do this nowadays, but an extremely popular(and good) method is called matrix factorization. If you want a detailed explanation of the math, check out this great [blog post](http://www.albertauyeung.com/post/python-matrix-factorization/), but the intuition is relatively easy to grasp. First, you build a matrix with users(reviewers in this case) as the rows and items(beers) as the columns. Each cell is the rating that reviewer1 gave beer1, for example. When you flesh out this matrix, there will be empty cells where a reviewer hasn't tried beer21 or beer143. With matrix factorization we predict what we think the value of these empty cells should be--what would this user rate that beer if they try it? So by predicting the value of these empty cells, the recommendation system is giving us just what we need to recommend new beers to people. What beers should you try? The ones with the highest predicted rating that you haven't tried yet?
 
-But how do you generate these predictions you ask? You do this by discovering the *latent features* that determine how a user rates items. For instance, there could be latent features describing users who like Hefeweizens. Or a feature describing users who like beers associated with a specific geographical area. Or even a feature for users who like German Pilsners that are extra bitter. Essentially, if we have a dataset with 50 users and 50 beers, instead of having to describe each user by the specific beers they like, we break this down down into a smaller set of features that describe their tastes--do they like bitter beers? dark beers? sour beers? strong ABV beers? The details of how you do this algorithmically can be found in the blog post I linked above(spoiler: you use gradient descent to solve for a user association matrix **P** and an item association matrix **Q**).
+It certainly seems pretty hand-wavy to say we just fill in some cells and use those values to recommend beers. How do you actually generate the predictions you might wonder? We do this by discovering the *latent features* that determine how a user rates items. The whole concept of matrix factorization works because we can take advantage of the fact that individuals don't have 100% unique preferences. Our preferences are clustered. Maybe we like movies with a certain actress. Maybe we like a certain genre of movie. Or perhaps we like clothing from a certain designer or with a certain color palette. With beer, maybe we like beers of a certain style or beers that are extra hoppy. These are all things that could be latent features in a recommendation system. Using these latent features we can infer that if user1 and user2 both have a feature 'Likes movies with Tom Hanks', then a new movie with Tom Hanks will have a high predicted value for them.   
 
-Luckily, there are several great packages in R that allow for easy implementation of matrix factorization. First I need to do a bit of cleanup. Most reviewers in our dataset are reviewing very few beers. This means they would have a lot of empty cells in their matrix and it makes it tough to generate good predictions.
+The details of how you solve for these latent features algorithmically can be found in the blog post I linked above(spoiler: you use gradient descent to solve for a user association matrix **P** and an item association matrix **Q**). For our purposes, it's enough to think we are generating features of reviewers--reviewers that  like bitter beers, reviewers that like chocolate stouts, reviewer that like beers from a certain area or of a certain ABV--and generating features for beers--beers that are high ABV, beers that are fruity or bitter, beers from a specific brewery--and using those to construct predictions for unseen beers.
+
+Luckily, there are several great packages in R that allow for easy implementation of matrix factorization. First, I need to do a bit of cleanup. Most reviewers don't review many beers and most beers don't get reviewed many times. We like a sparse matrix, but we don't gain a lot of information from reviewers that review one time or beers than are only reviewed one time. We need to only include reviewers and beers above some threshold.
 
 ```{r, number-of-reviews-histogram}
 reviews_raw %>%
@@ -605,7 +607,7 @@ user_beer_triplet <- over_50_reviews %>%
   select(user_id, beer_id, review_overall)
 ```
 
-To train the actual model I need to specify the inputs for the training function and then set the parameters. The main parameter to focus on is *dim*. This determines the number of latent factors to fit. In playing around, I found that the default of 10 was too few factors. It gave reasonable recommendations, but it was essentially recommending the same beers to everyone, regardless of personal preferences. After a bit of tinkering, I decided to use 200 and see how specific the recommendations would get. You could probably go higher, but the model takes longer to fit and the results were pretty good at 200 already. The code for training and generating predictions for the recommender is in the code chunk below and I'd encourage you do check it out--even though it's basically straight from the documentation.
+To train the actual model I need to specify the inputs for the training function and then set the parameters. The main parameter to focus on is *dim*. This determines the number of latent factors to fit. In playing around, I found that the default of 10 was too few factors. It gave reasonable recommendations, but it was essentially recommending the same beers to everyone, regardless of personal preferences. After a bit of tinkering, I decided to use 200 and see how specific the recommendations would get. You could probably go higher, but the model takes longer to fit and the results were pretty good at 200 already. The code for training and generating predictions for the recommender is in the code chunk below and I'd encourage you do check it out--even though it's basically straight from the recosystem documentation.
 ```{r, train-reco-system, message = FALSE, eval = FALSE, echo = TRUE}
 library(recosystem)
 #create recosystem object
@@ -649,9 +651,9 @@ saveRDS(pred, "beer_reco_predictions.RDS")
 
 
 ```
-The model runs through 20 iterations and the RMSE is still dropping. You can really easily overfit this model. If you do 300 or even 400 latent factors the RMSE will continue to drop. In a full scale implementation, I would be using a training and testing set and cross validation to choose the number of latent factors that minimizes the RMSE on the test set. Here, I'm simply doing a proof of concept, so we are playing it a bit fast and loose.
+The model runs through 20 iterations and the RMSE is still dropping. You can really easily overfit this model. If you do 300 or even 400 latent factors the RMSE will continue to drop. In a full scale implementation, I would be using a training and testing set and/or cross validation to choose the number of latent factors that minimizes the RMSE on the test set. Here, I'm simply doing a proof of concept, so we are playing it a bit fast and loose.
 
-With the model training and predictions precomputed for all users, it's time to select some users and see if the results make sense. I built a couple helper functions to help view the results. The first takes the prediction data frame and filters out beers that user already reviewed and returns the top 3 beers that recommendation system predicted for them. The second function grabs the top 10 beers that that user already reviewed so we can compare and see if the results are sensible.
+With the model trained and predictions precomputed for all users, I can select some users and examine the results. I built a couple helper functions to view the results. The first takes the prediction data frame and filters out the beers that user already reviewed then returns the top 3 beers predicted for them. The second function grabs the top 10 beers that that user already reviewed so we can compare and see if the results are sensible.
 ```{r, recommendation-and-helper-functions}
 #Look into using 'here' package for easier paths here
 predictions <- readRDS("~/Playground/Playground/beer_reco_predictions.RDS")
@@ -716,7 +718,7 @@ users_top_rated_beers(user = 270)
 
 ## Which of the factors(aroma, taste, appearance, palette) are most important in determining the overall quality of the beer?
 
-This is another fun question because--yet again--there's a lot of different ways you could reason about finding an answer. Initially, I wanted to use PCA. I figured I could use it to see which factor most closely corresponded to the first principle component--which is where, by definition, most of the variance occurs. But after thinking it over some more, I decided not to use this approach. Typically PCA is used when you have a lot of variables that are in play. Here, I'm only really looking at 4. While I think you could cast the problem in a way to 'use' PCA, I don't know that it's the correct approach, so I'm using other techniques here. I'd love to see how someone else would approach this problem using PCA though, so if you get a hankering to do that, please shoot me a link to your analysis in the comments!
+This is another fun question because--yet again--there are a lot of different ways you could reason about finding an answer. Initially, I wanted to use PCA. I figured I could use it to see which factor most closely corresponded to the first principle component--which is where, by definition, most of the variance occurs. But after thinking it over some more, I decided not to use this approach. Typically PCA is used when you have a lot of variables that are in play. Here, I'm only really looking at 4. While I think you could cast the problem in a way to 'use' PCA, I don't know that it's the good approach, so I'm using other techniques here. I'd love to see how someone would approach this problem using PCA though, so if you get a hankering to do that, please shoot me a link to your analysis in the comments!
 
 Instead of PCA, I'm going to do two things: 
 
@@ -744,9 +746,9 @@ cor_results%>%
   formattable::formattable()
 ```
 
-The highest correlations appear between taste and overall and palate and overall. Intuitively this makes sense--how a beer tastes probably plays a pretty big role in how the beer is scored overall. Aroma and appearance are relatively unimportant it seems, but it's important to note that aroma is highly correlated with taste--after all, smell plays a huge role in how we perceive food. 
+The highest correlations appear between taste and overall and palate and overall. Intuitively this makes sense--how a beer tastes probably plays a pretty big role in how the beer is scored overall. Aroma and appearance are relatively unimportant it seems, but it's important to note that aroma is highly correlated with taste--after all, smell plays a huge role in how we perceive food--so aroma may be undervalued by this metric. 
 
-It's also useful to make a scatterplot showing the relationship of appearance or taste to overall scores. Below you see a random sample of the reviews with a simple line fit to the relationship between that facet and the overall score. You can see how taste is much more tightly clustered(thus the higher correlation), while appearance is quite a bit more spread out.
+This scatterplot shows the relationship of appearance/taste/etc to overall scores. You can see how taste is much more tightly clustered(thus the higher correlation), while the others are quite a bit more spread out.
 
 
 ```{r, subfactor-scatterplot-with-lm}
@@ -774,7 +776,7 @@ reviews_raw%>%
 ```
 
 #### Linear model for feature importance
-This is all useful, if not completely satisfying information. Maybe we can glean a little more insight by building a linear model to see how things line up. Fitting linear models is really easy in R with the base **lm** function. There are many more sophisticated methods and packages for building/plotting/interpreting/overanalysing linear models in R, but for my purposes here the base **lm** function works just fine.
+This is useful, if not completely satisfying information. Maybe we can glean a little more insight by building a linear model to see how things line up. There are a ton of more sophisticated linear models and R packages we could use here, but the base **lm** function is quick, easy, and will more than suffice for what I'm doing here.
 
 ```{r, linear-model-review-overall}
 # get rid of 7 reviews that are zero for some reason--pretty sure it's supposed to be 1-5
@@ -787,7 +789,9 @@ m1 <- lm(review_overall~ review_taste + review_aroma + review_appearance + revie
 summary(m1)
 ```
 
-This linear model uses ordinary least squares regression to predict review_overall from the sub-reviews--taste, aroma, appearance and palate. With an R-squared of just .658, this model isn't super accurate, but it's good enough for our purposes. I just want to see which factor is most important to the overall review score after all. It's tempting to just look at the coefficient values and say whichever is larger is more important, but that's [not really true](https://stats.stackexchange.com/a/202846). Variables on different scales, variables with wildly different variances or multi-collinearity between variables will all make determining feature importance from the coefficient values problematic(if not outright wrong).
+This linear model is predicting review_overall from the sub-reviews--taste, aroma, appearance and palate. With an R-squared of just .658, this model isn't super accurate, but it's good enough for our purposes.[^2] I just want to see which factor is most important to the overall review score after all. It's tempting to just look at the coefficient values and say whichever is larger is more important, but that's [not really true](https://stats.stackexchange.com/a/202846). Variables on different scales, variables with wildly different variances or multi-collinearity between variables will all make determining feature importance from the coefficient values problematic(if not outright wrong).
+
+[^2]: I did explore including interaction effects in the model, but they didn't provide much improvement and they make determining feature importance a little more difficult. Ultimately I decided to ignore them.
 
 Luckily, some very smart statisticians built a package called [**relaimpo**](https://cran.r-project.org/web/packages/relaimpo/relaimpo.pdf) that will calculate more useful feature importance metrics. It turns out this is a really slippery and complicated area of statistics, so I'd encourage you to read about it [here](https://prof.beuth-hochschule.de/fileadmin/prof/groemp/downloads/amstat07mayp139.pdf) if you'd like to see how a statistician thinks about this area. There are 8 different metrics you can use in *relaimpo*, but they all basically give the same answer. I've included 5 below(*lmg* and *betasq* seem to be the most commonly used metrics) and you can see that each metric under 'Relative importance metrics' gives the same breakdown of feature importance:
 
@@ -804,7 +808,7 @@ There is quite a bit of difference in how *much* more important taste is compare
 
 ## If I enjoy a beer due to its aroma and appearance, which beer style should I try?
 
-So what if we aren't the typical beer drinker and we really care most about the aroma and appearance of a beer. How should I determine what to drink then? I think a simple approach is appropriate for this question. If a beer drinker has a strong preference for beers that are very aromatic and richly colored, then they should like beer styles that score highly in the review_aroma and review_appearance variables.
+So what if we aren't the typical beer drinker and what we really care about is the aroma and appearance of a beer. How should I determine what to drink then? I think a simple approach is appropriate for this question. If a beer drinker has a strong preference for beers that are very aromatic and richly colored, then they should like beer styles that score highly in the review_aroma and review_appearance variables.
 
 For the graph below I grouped by the style of beer and then averaged the aroma and appearance scores. Additionally, I took the average of the aroma and appearance to get a sense of the total 'smell and sight' score. 
 
@@ -829,6 +833,7 @@ aroma_and_appearance %>%
   select(-avg_overall)%>%
   ggplot(aes(y = beer_style))+
   geom_point(aes(x = avg_aroma_appear),size = 3, alpha = .8)+
+  # dumbbell needs both the left and right dots specified: use x and xend 
   geom_dumbbell(aes(x = avg_aroma, xend = avg_appearance),
                 size_x = 2.5,
                 size_xend = 2.5,
@@ -866,7 +871,7 @@ aroma_and_appearance %>%
   my_theme_tweaks()  
 ```
 
-As a beer lover, this plot doesn't surprise me much. Imperial Stouts are known for being highly aromatic and have a beautiful chocolate/ruby color that reviewers seem to like. If I just had to recommend one style, it's probably be the *American Double/Imperial Stout* because it has high aroma and appearance scores, while the Russian Imperial Stout has the highest appearance score, but a slightly lower aroma score. 
+As a beer lover, this plot doesn't surprise me much. Imperial Stouts are known for being highly aromatic and have a beautiful chocolate/ruby color that reviewers seem to like. If I'm just recommending one style, it's probably be the **American Double/Imperial Stout** because it has high aroma and appearance scores, while the Russian Imperial Stout has the highest appearance score, but a slightly lower aroma score. 
 
 This graphic could also be useful if you care slightly more about, say, the aroma of a beer. You'd just try the styles with the aroma dots on the right side of the dumbbell plot -- Quads, Imperial IPAs, Gueuzes, Wild Ales, or Eisbocks perhaps. 
 
@@ -874,6 +879,8 @@ This graphic could also be useful if you care slightly more about, say, the arom
 ### Wrapup
 
 This was a really fun dataset to play around with, and I have to say I completely agree with Tanya Cashorali when she says this sort of take home test is a great way to interview data science job candidates. There's a lot of flexibility in how you perform the analysis and I think you get a good idea of what someone is capable of and how they reason about solving actual problems.
+
+As usual, the full code for this report can be found [here](https://github.com/Grollus/DataBlog/tree/master/content/post) and thanks for reading!
 
 ### Code Appendix
 This section includes additional code that was used--mainly to explore the data--but that didn't make it past the cutting stage of report writing. It's included because it's interesting, if not directly relevant to the analysis. 
