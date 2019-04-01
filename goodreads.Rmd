@@ -1,0 +1,188 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, read_books_and_tidy}
+# Read in goodreads data gather from their data export page
+# https://www.goodreads.com/review/import
+get_tidy_books <- function(file){
+  # packages needed
+  library(readr)
+  library(dplyr)
+  library(snakecase)
+  library(lubridate)
+  library(stringr)
+  
+  # read in raw data file: csv when you import your books. May change using goodreads API
+  books <- read_csv(file)
+  
+  # change column names to an easier to work with format
+  colnames(books) <- to_any_case(colnames(books), case = "snake") 
+  
+  #Cols to keep
+  keeper_cols <- c("book_id", "title", "author", "my_rating", "number_of_pages", 
+                   "original_publication_year", "date_read", "date_added", "bookshelves", "exclusive_shelf")
+  
+  # only looking at books users already read, not books on the to-read or books you want to read shelves.
+  read_books <- books %>%
+    filter(exclusive_shelf == "read")%>%
+    select(one_of(keeper_cols))%>%
+    # create some useful date columns and make sure date_read is in the format I want
+    mutate(date_read = ymd(date_read))%>%
+    mutate(year_read = year(date_read))%>%
+    arrange(desc(date_read))
+  
+  # tidy book names so they don't include the stuff in paraentheses --it messes with the classify pages
+  read_books %>%
+    # removes book info inside paraentheses and trim any whitespace left over
+    mutate(title = str_trim(str_remove(title, " \\([^()]+\\)")))
+  
+}
+
+books <- get_tidy_books("Data/goodreads_library_export.csv")
+
+# # use 'gender' package to attempt gender tagging authors. This uses first name (and ideally the birth year which I don't have here)
+# # Need to split first and last name up to use this
+# read_books <- read_books%>%
+#   extract(author, c("first_name", "last_name"), "([^ ]+) (.*)", remove = FALSE)
+# 
+# # add date columns for gender labeling
+# read_books <- read_books%>%
+#   mutate(min_year = 1932,
+#          max_year = 2012)
+# 
+# genders <- gender::gender_df(read_books, name_col = 'first_name',
+#                   year_col = c("min_year", "max_year"),
+#                                method = "ssa")
+# 
+# books_with_genders <- read_books%>%
+#   left_join(genders, by = c("first_name" = "name"))
+# 
+# books_with_genders %>%
+#   filter(is.na(gender))%>%
+#   View()
+```
+
+
+
+```{r, encoded_urls}
+encode_urls <- function(data){
+  library(dplyr)
+  library(purrr)
+  base <- "http://classify.oclc.org/classify2/Classify?"
+  title_and_author <- data%>%
+    select(title, author)%>%
+    mutate(title_encoded = map_chr(title, URLencode),
+           author_encoded = map_chr(author, URLencode))%>%
+    mutate(urls = paste0(base, "author=", author_encoded, "&title=", title_encoded))
+  title_and_author
+}
+```
+
+
+
+Now I have to start docker (I launch it with the Docker quickstart terminal--no idea if this is the best way). After docker is up and running I run the following command in a terminal. Since I'm on windows, I don't 'think' I can run this from a bash code chunk.
+
+```{bash, eval = FALSE}
+docker run -d -p 4445:4444 selenium/standalone-chrome
+```
+
+With that run, now I can use RSelenium and my standard R packages to scrape some information.
+
+```{r}
+library(httr)
+library(xml2)
+library(rvest)
+library(RSelenium)
+
+#First I need to get the wi numbers for each author/title. I can do this with basic tidyverse scraping functionality
+grab_wi_number <- function(one_url){
+  requested_url <- content(GET(one_url), as = 'text')
+  raw_html <- read_html(requested_url)
+  # scrape the WI number from the title, author input. First I get a tibble of the works from the work table of html
+  # first get the nodes
+  works_tdf <- html_nodes(raw_html, "work")%>%
+    # use purr to get all attributes from each node using xml_attrs
+    map(xml_attrs)%>%
+    # create a tibble out of the list you get
+    map_df(~as.list(.))%>%
+    # only need the WI column
+    select(wi)
+  
+  works_tdf
+}
+
+# with the wi numbers, I can scrap the VIAF numbers I'll use to tag gender
+get_viaf_number <- function(one_url){
+  base_url <- "http://classify.oclc.org/classify2/ClassifyDemo?wi="
+  
+  # scrape the viaf number: it's at '#display-V-tbl td+ td a'
+  # I call
+  viaf_number <- read_html(paste0(base_url, grab_wi_number(one_url)$wi[1]))%>%
+    html_nodes("#display-V-tbl td+ td a")%>%
+    html_text()
+  viaf_number
+}
+
+
+read_html(paste0("http://classify.oclc.org/classify2/ClassifyDemo?wi=", grab_wi_number(test_url)$wi[1]))%>%
+    html_nodes("#display-V-tbl td+ td a")%>%
+    html_text()%>%
+    map_df(~as.list(.))
+temp_small <- temp[1:5,]
+temp_small$viaf <- map_chr(temp_small$urls, get_viaf_number)
+
+# can't use remoteServerAddr = "localhost" for windows. Needs to be the ip of the VM that is running docker
+remDr <- remoteDriver(
+  remoteServerAddr = "192.168.99.100",
+  port = 4445L,
+  browserName = "chrome"
+)
+remDr$open()
+
+get_gender <- function(viaf_number){
+  base_url <- "http://viaf.org/viaf/"
+  remDr$navigate(paste0(base_url, viaf_number))
+  gender <- read_html(remDr$getPageSource()[[1]])%>%
+    html_nodes(".langHi0+ .langHi0")%>%
+    html_text()
+  
+  gender
+  
+}
+
+remDr$navigate("http://viaf.org/viaf/69224074")
+remDr$getTitle()
+remDr$screenshot(display = TRUE)
+
+
+test_url <- temp$urls[1]
+
+checkForServer()
+d <- paste0("http://viaf.org/viaf/", c)
+
+```
+
+```{r}
+library(RSelenium)
+
+
+remDr$open(silent = TRUE)
+
+remDr$navigate(d[1])
+remDr$getTitle()
+remDr$screenshot(display = TRUE)
+
+##nameEntry2 , .langHi0+ .langHi0
+
+page_html <- read_html(remDr$getPageSource()[[1]])%>%
+  html_nodes(".langHi0+ .langHi0")%>%
+  html_text()%>%
+  tibble()
+```
+
