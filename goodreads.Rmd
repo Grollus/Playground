@@ -11,13 +11,12 @@ knitr::opts_chunk$set(echo = TRUE)
 # Read in goodreads data gather from their data export page
 # https://www.goodreads.com/review/import
 get_tidy_books <- function(file){
-  # packages needed
+  # load required packages
   library(readr)
   library(dplyr)
   library(snakecase)
   library(lubridate)
   library(stringr)
-  
   # read in raw data file: csv when you import your books. May change using goodreads API
   books <- read_csv(file)
   
@@ -45,27 +44,6 @@ get_tidy_books <- function(file){
 }
 
 books <- get_tidy_books("Data/goodreads_library_export.csv")
-
-# # use 'gender' package to attempt gender tagging authors. This uses first name (and ideally the birth year which I don't have here)
-# # Need to split first and last name up to use this
-# read_books <- read_books%>%
-#   extract(author, c("first_name", "last_name"), "([^ ]+) (.*)", remove = FALSE)
-# 
-# # add date columns for gender labeling
-# read_books <- read_books%>%
-#   mutate(min_year = 1932,
-#          max_year = 2012)
-# 
-# genders <- gender::gender_df(read_books, name_col = 'first_name',
-#                   year_col = c("min_year", "max_year"),
-#                                method = "ssa")
-# 
-# books_with_genders <- read_books%>%
-#   left_join(genders, by = c("first_name" = "name"))
-# 
-# books_with_genders %>%
-#   filter(is.na(gender))%>%
-#   View()
 ```
 
 
@@ -82,6 +60,8 @@ encode_urls <- function(data){
     mutate(urls = paste0(base, "author=", author_encoded, "&title=", title_encoded))
   title_and_author
 }
+
+urls <- encode_urls(books)
 ```
 
 
@@ -94,60 +74,138 @@ docker run -d -p 4445:4444 selenium/standalone-chrome
 
 With that run, now I can use RSelenium and my standard R packages to scrape some information.
 
+
+```{r}
+# generate a small df of books to test with
+test_urls <- urls[1:5,]
+test_copy <- urls
+```
+
 ```{r}
 library(httr)
 library(xml2)
 library(rvest)
 library(RSelenium)
 
-#First I need to get the wi numbers for each author/title. I can do this with basic tidyverse scraping functionality
-grab_wi_number <- function(one_url){
-  requested_url <- content(GET(one_url), as = 'text')
-  raw_html <- read_html(requested_url)
-  # scrape the WI number from the title, author input. First I get a tibble of the works from the work table of html
-  # first get the nodes
-  works_tdf <- html_nodes(raw_html, "work")%>%
-    # use purr to get all attributes from each node using xml_attrs
-    map(xml_attrs)%>%
-    # create a tibble out of the list you get
-    map_df(~as.list(.))%>%
-    # only need the WI column
-    select(wi)
-  
-  works_tdf
+r <- content(GET(test_copy$urls[82]), as = 'text')
+raw <- read_html(r)
+
+
+t <- html_nodes(raw, "work")%>%
+  map(xml_text)%>%
+  # extracts the character vector containing the wi number
+  simplify()%>%
+  first()
+
+
+authors <- html_nodes(raw, "authors")%>%
+  html_nodes("author")%>%
+  html_text()
+identifiers <- html_nodes(raw, "authors")%>%
+  html_nodes('author')%>%
+  map(xml_attrs)%>%
+  map_df(~as.list(.))%>%
+  bind_cols(tibble(author = authors))
+
+
+
+
+for(i in 1:length(test_copy$urls)){
+  print(paste0("Book # ", i))
+  test_copy$wi_number[i] <- grab_wi_number(test_copy$urls[i])
 }
+
+test_urls <- test_copy%>%
+  slice(c(1, 2, 6, 47, 82, 155))
+
+#First I need to get the wi numbers for each author/title. I can do this with basic tidyverse scraping functionality
+## TO DO NEEDS BETTER COMMENTS
+grab_wi_number <- function(one_url, .verbose = TRUE){
+  # wi #'s are found in two different places: 
+  #         - Most often in the 'work' element under the 'wi' attribute 
+  #         - Occasionally in the xml text of the 'work' element (generally in non-fiction books it seems like)
+  
+  sGET <- purrr::safely(GET)
+  res <- sGET(one_url)
+  
+  # get the response codes to filter pages without the information I need
+  response_code <- read_html(res$result)%>%
+    html_nodes("response")%>%
+    map(html_attrs)%>%
+    simplify()%>%
+    first()
+  
+  if(is.null(res$result) | (status_code(res$result) !=200) | response_code == 102){
+    if(.verbose) message("URL invalid or results returned NULL")
+    return(NA)
+  } else{
+    requested_url <- content(res$result, as = 'text')
+    raw_html <- read_html(requested_url)
+    
+    
+    # Some books (seems to be nonfiction/academic type books) don't have wi number in the attributes of work node
+    # check to make sure wi is included in attributes so I can actually scrape something and not throw an error
+    work_attributes <- html_nodes(raw_html, "work")%>%
+      map(html_attrs)
+    if("wi" %in% attributes(work_attributes[[1]])$names){
+      # scrape the WI number from the title, author input. 
+      works_tdf <- html_nodes(raw_html, "work")%>%
+        # use purrr to get all attributes from each element using xml_attrs
+        map(xml_attrs)%>%
+        # create a tibble out of the list you get
+        map_df(~as.list(.))%>%
+        # only need the WI column
+        select(wi)%>%
+        pull(wi)
+      # return a single wi number as a character
+      works_tdf[1]
+    } else {
+      # if wi is not an attribute for the xml file, then wi is listed as text in the work element
+      html_nodes(raw_html, "work")%>%
+        map(xml_text)%>%
+        # extract the character vector containing the wi number
+        simplify()%>%
+        first()
+    }
+  }
+  
+}
+
 
 # with the wi numbers, I can scrap the VIAF numbers I'll use to tag gender
 get_viaf_number <- function(one_url){
   base_url <- "http://classify.oclc.org/classify2/ClassifyDemo?wi="
   
   # scrape the viaf number: it's at '#display-V-tbl td+ td a'
-  # I call
-  viaf_number <- read_html(paste0(base_url, grab_wi_number(one_url)$wi[1]))%>%
-    html_nodes("#display-V-tbl td+ td a")%>%
+  # I call grab_wi_number here to get the wi's as needed
+  viaf_number <- read_html(paste0(base_url, grab_wi_number(one_url)))%>%
+    html_nodes("#display-V-tbl a")%>%
+    #html_nodes("#display-V-tbl td+ td a")%>%
     html_text()
   viaf_number
 }
 
-
-read_html(paste0("http://classify.oclc.org/classify2/ClassifyDemo?wi=", grab_wi_number(test_url)$wi[1]))%>%
-    html_nodes("#display-V-tbl td+ td a")%>%
-    html_text()%>%
-    map_df(~as.list(.))
-temp_small <- temp[1:5,]
 temp_small$viaf <- map_chr(temp_small$urls, get_viaf_number)
 
+# Scraping Viaf website requires RSelenium, so 1) make sure docker is up and running
+# 2) make sure R and the server are connected
 # can't use remoteServerAddr = "localhost" for windows. Needs to be the ip of the VM that is running docker
 remDr <- remoteDriver(
   remoteServerAddr = "192.168.99.100",
   port = 4445L,
   browserName = "chrome"
 )
+# don't think I want to instantiate the browser every time, so I do it once here
 remDr$open()
 
 get_gender <- function(viaf_number){
+  for(i in 1:length(viaf_number)){
+  print(paste0("Book ", i, " ", Sys.time()))  
+  }
   base_url <- "http://viaf.org/viaf/"
+  # navigate to the correct url
   remDr$navigate(paste0(base_url, viaf_number))
+  # scrape the gender for that author
   gender <- read_html(remDr$getPageSource()[[1]])%>%
     html_nodes(".langHi0+ .langHi0")%>%
     html_text()
@@ -156,33 +214,22 @@ get_gender <- function(viaf_number){
   
 }
 
-remDr$navigate("http://viaf.org/viaf/69224074")
-remDr$getTitle()
-remDr$screenshot(display = TRUE)
+get_all_genders <- function(url_df){
+  # scrape all viaf numbers and add them to input df
+  # function is expecting a df with encoded urls
+  url_df$viaf <- map_chr(url_df$urls, get_viaf_number)
+  
+  # use these scraped viafs to return the gender of the author as a new variable to the input df
+  url_df$gender <- map_chr(url_df$viaf, get_gender)
+  url_df
+}
+
+df <- get_all_genders(urls)
 
 
-test_url <- temp$urls[1]
-
-checkForServer()
-d <- paste0("http://viaf.org/viaf/", c)
-
+for(i in 1:length(test_urls)){
+  print(paste0("Book ", i, " ", Sys.time()))  
+}
 ```
 
-```{r}
-library(RSelenium)
-
-
-remDr$open(silent = TRUE)
-
-remDr$navigate(d[1])
-remDr$getTitle()
-remDr$screenshot(display = TRUE)
-
-##nameEntry2 , .langHi0+ .langHi0
-
-page_html <- read_html(remDr$getPageSource()[[1]])%>%
-  html_nodes(".langHi0+ .langHi0")%>%
-  html_text()%>%
-  tibble()
-```
 
