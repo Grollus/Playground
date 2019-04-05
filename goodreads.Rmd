@@ -76,82 +76,63 @@ With that run, now I can use RSelenium and my standard R packages to scrape some
 
 
 ```{r}
-# generate a small df of books to test with
-test_urls <- urls[1:5,]
-test_copy <- urls
-```
-
-```{r}
 library(httr)
 library(xml2)
 library(rvest)
 library(RSelenium)
+library(purrr)
+library(dplyr)
 
-r <- content(GET(test_copy$urls[82]), as = 'text')
-raw <- read_html(r)
-
-
-t <- html_nodes(raw, "work")%>%
-  map(xml_text)%>%
-  # extracts the character vector containing the wi number
-  simplify()%>%
-  first()
-
-
-authors <- html_nodes(raw, "authors")%>%
-  html_nodes("author")%>%
-  html_text()
-identifiers <- html_nodes(raw, "authors")%>%
-  html_nodes('author')%>%
-  map(xml_attrs)%>%
-  map_df(~as.list(.))%>%
-  bind_cols(tibble(author = authors))
-
-
-
-
-for(i in 1:length(test_copy$urls)){
-  print(paste0("Book # ", i))
-  test_copy$wi_number[i] <- grab_wi_number(test_copy$urls[i])
-}
-
+test_copy <- urls
 test_urls <- test_copy%>%
-  slice(c(1, 2, 6, 47, 82, 155))
+  slice(c(1, 2, 6, 47, 71,  82, 155))
+
 
 #First I need to get the wi numbers for each author/title. I can do this with basic tidyverse scraping functionality
-## TO DO NEEDS BETTER COMMENTS
 grab_wi_number <- function(one_url, .verbose = TRUE){
   # wi #'s are found in two different places: 
   #         - Most often in the 'work' element under the 'wi' attribute 
   #         - Occasionally in the xml text of the 'work' element (generally in non-fiction books it seems like)
   
+  # Be nice the the classify website and don't bombard the api
+  Sys.sleep(sample(seq(0, 1, .25), 1))
+  
+  # wrap the GET httr function with purrr::safely which gives it exception handling code
   sGET <- purrr::safely(GET)
   res <- sGET(one_url)
   
-  # get the response codes to filter pages without the information I need
+  # If the classify api doesn't find a result for the author+title, it returns an xml page with response code 102, otherwise it will be 2 or 4 I believe.
+  # I want to grab this response code to use for checking if I have found the book I searched for
   response_code <- read_html(res$result)%>%
     html_nodes("response")%>%
     map(html_attrs)%>%
     simplify()%>%
     first()
   
+  # checks 1) if the httr call returned NULL
+  #        2) if the httr call came back OK (wasn't a 404 error code or something like that)
+  #        3) if the xml has a 102 response code(meaning it didn't find the book and is basically empty xml)
   if(is.null(res$result) | (status_code(res$result) !=200) | response_code == 102){
+    # if these conditions return TRUE, warn that somethings wrong with the url and return an NA value
     if(.verbose) message("URL invalid or results returned NULL")
     return(NA)
   } else{
+    
+    # read the valid xml page
     requested_url <- content(res$result, as = 'text')
     raw_html <- read_html(requested_url)
     
     
-    # Some books (seems to be nonfiction/academic type books) don't have wi number in the attributes of work node
-    # check to make sure wi is included in attributes so I can actually scrape something and not throw an error
+    # This handles scraping wi # from the two locations it can be found
+    
+    # Get a list of the work attributes found in the html
     work_attributes <- html_nodes(raw_html, "work")%>%
       map(html_attrs)
+    
+    # if wi is an attribute, I get the wi # from there and return it as a character vector
     if("wi" %in% attributes(work_attributes[[1]])$names){
       # scrape the WI number from the title, author input. 
-      works_tdf <- html_nodes(raw_html, "work")%>%
-        # use purrr to get all attributes from each element using xml_attrs
-        map(xml_attrs)%>%
+      works_tdf <- work_attributes%>%
         # create a tibble out of the list you get
         map_df(~as.list(.))%>%
         # only need the WI column
@@ -159,6 +140,7 @@ grab_wi_number <- function(one_url, .verbose = TRUE){
         pull(wi)
       # return a single wi number as a character
       works_tdf[1]
+      
     } else {
       # if wi is not an attribute for the xml file, then wi is listed as text in the work element
       html_nodes(raw_html, "work")%>%
@@ -173,17 +155,39 @@ grab_wi_number <- function(one_url, .verbose = TRUE){
 
 
 # with the wi numbers, I can scrap the VIAF numbers I'll use to tag gender
-get_viaf_number <- function(one_url){
+get_viaf_number <- function(one_url, .verbose = TRUE){
+  # Need to check if wi # is NA. If so, return NA value
+  wi_number <- grab_wi_number(one_url)
+  if(is.na(wi_number)){
+    if(.verbose) message("NA WI number. Book title+author not found")
+    return(NA)
+  }
+  
+  # Also need to make sure I'm getting the right author--translators and multiple authors can be picked by accident if I'm not careful.
   base_url <- "http://classify.oclc.org/classify2/ClassifyDemo?wi="
   
   # scrape the viaf number: it's at '#display-V-tbl td+ td a'
   # I call grab_wi_number here to get the wi's as needed
-  viaf_number <- read_html(paste0(base_url, grab_wi_number(one_url)))%>%
+  viaf_number <- read_html(paste0(base_url, wi_number))%>%
     html_nodes("#display-V-tbl a")%>%
-    #html_nodes("#display-V-tbl td+ td a")%>%
+    #html_nodes("#display-V-tbl td+ td a")%>%=
     html_text()
   viaf_number
 }
+
+t <- read_html("http://classify.oclc.org/classify2/ClassifyDemo?wi=326454")%>%
+  html_nodes("#display-V-tbl a , #display-Summary a")%>%
+  # html_nodes("#display-V-tbl a")%>%
+  html_text()
+
+t2 <- read_html("http://classify.oclc.org/classify2/ClassifyDemo?wi=326454")%>%
+  html_nodes("dd:nth-child(6) a:nth-child(1)")%>%
+  html_text()
+  
+  
+library(stringr)
+t_df <- as_tibble(matrix(t, ncol = 2, byrow = TRUE,
+       dimnames = list(NULL, c("name", "viaf")))) 
 
 temp_small$viaf <- map_chr(temp_small$urls, get_viaf_number)
 
