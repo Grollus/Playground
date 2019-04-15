@@ -62,7 +62,7 @@ encode_all_urls <- function(data){
   title_and_author
 }
 
-urls <- encode_urls(books)
+urls <- encode_all_urls(books)
 ```
 
 
@@ -90,7 +90,7 @@ test_urls <- test_copy%>%
 
 
 #First I need to get the wi numbers for each author/title. I can do this with basic tidyverse scraping functionality
-grab_wi_number <- function(author = NULL, title = NULL, .verbose = TRUE){
+get_wi_number <- function(author = NULL, title = NULL, .verbose = TRUE){
   # wi #'s are found in two different places: 
   #         - Most often in the 'work' element under the 'wi' attribute 
   #         - Occasionally in the xml text of the 'work' element (generally in non-fiction books it seems like)
@@ -167,13 +167,18 @@ grab_wi_number <- function(author = NULL, title = NULL, .verbose = TRUE){
 # with the wi numbers, I can scrap the VIAF numbers I'll use to tag gender
 get_viaf_number <- function(author = NULL, title = NULL, .verbose = TRUE){
   # Make sure an author and title are given
-  if(is.null(author) | is.null(title)){
-    if(.verbose) message("Author or title not supplied")
+  if(is.null(author)){
+    if(.verbose) message("Author not supplied")
+    return(NA)
+  }
+  
+  if(is.null(title)){
+    if(.verbose) message("Title not supplied")
     return(NA)
   }
   
   # Need to check if wi # is NA. If so, return NA value
-  wi_number <- grab_wi_number(author, title)
+  wi_number <- get_wi_number(author, title)
   if(is.na(wi_number)){
     if(.verbose) message("NA WI number. Book title+author not found")
     return(NA)
@@ -185,40 +190,26 @@ get_viaf_number <- function(author = NULL, title = NULL, .verbose = TRUE){
   # scrape the viaf table: May contain multiple authors/translators. Need to check and get the viaf # associated with the actual author
   viaf_table <- read_html(paste0(base_url, wi_number))%>%
     html_nodes("#display-V-tbl a")%>%
-    #html_nodes("#display-V-tbl td+ td a")%>%=
     html_text()%>%
     matrix(., ncol = 2, 
                    byrow = TRUE,
                    dimnames = list(NULL, c("name", "viaf")))%>%
-    as_tibble()%>%
-    # Authors with one name (eg Voltaire) may or may not be extracted correctly. If they have a comma after the first name, this should work.
-    # If no comma, then NA is returned
-    tidyr::extract(name, "last", "([A-Za-z]+),")%>%
-    filter(str_detect(author, last))%>%
+    as_tibble()
+  
+  # matching author based on last name. Extract last name here--author is assumed to be in first middle last format  
+  name_split <- str_split(author, " ")[[1]]
+  last_name <- name_split[length(name_split)]
+  
+  # filter the scraped author viaf table to only include results matching the given author last name
+  viaf_table%>%
+    filter(str_detect(tolower(name), tolower(last_name)))%>%
     pull(viaf)
-    
-  
-  # return the viaf number associated with the author argument
-  
-  viaf_table
 }
 
-  
-library(stringr)
-t_df <- as_tibble(matrix(t, ncol = 2, byrow = TRUE,
-       dimnames = list(NULL, c("name", "viaf")))) %>%
-  tidyr::extract(name, c("last"), "([A-Za-z]+),")
-
-
-t2_df <- as_tibble(matrix(t2, ncol = 2, byrow = TRUE,
-       dimnames = list(NULL, c("name", "viaf")))) %>%
-  tidyr::extract(name, c("last"), "([A-Za-z]+),")
-test_urls <- test_urls%>%
-  mutate(is_author = str_detect(.$last))
-fuzzyjoin
-
-
-temp_small$viaf <- map_chr(temp_small$urls, get_viaf_number)
+# 7 books took ~10 seconds total to scrape viaf numbers
+Sys.time()
+test_urls$viaf <- map2(test_urls$author, test_urls$title, get_viaf_number)
+Sys.time()
 
 # Scraping Viaf website requires RSelenium, so 1) make sure docker is up and running
 # 2) make sure R and the server are connected
@@ -231,13 +222,21 @@ remDr <- remoteDriver(
 # don't think I want to instantiate the browser every time, so I do it once here
 remDr$open()
 
-get_gender <- function(viaf_number){
-  for(i in 1:length(viaf_number)){
-  print(paste0("Book ", i, " ", Sys.time()))  
+get_gender <- function(author = NULL, title = NULL, .verbose = TRUE){
+  # This is limited to binary genders at the moment. The goodreads api is also hit or miss on correctly tagging trans/nonbinary gender.
+  # I am not sure how to fix this. If goodreads misses it, then the oclassify method is probably missing it too.
+  
+  # get the viaf number
+  viaf <- get_viaf_number(author, title)
+  # Handle NA viaf numbers. Right now just return NA for gender and moves on.
+  if(is.na(viaf)){
+    if(.verbose) message("NA Viaf Value. Returning NA gender.")
+    return(NA)
   }
+  
   base_url <- "http://viaf.org/viaf/"
   # navigate to the correct url
-  remDr$navigate(paste0(base_url, viaf_number))
+  remDr$navigate(paste0(base_url, viaf))
   # scrape the gender for that author
   gender <- read_html(remDr$getPageSource()[[1]])%>%
     html_nodes(".langHi0+ .langHi0")%>%
@@ -247,22 +246,50 @@ get_gender <- function(viaf_number){
   
 }
 
-get_all_genders <- function(url_df){
-  # scrape all viaf numbers and add them to input df
-  # function is expecting a df with encoded urls
-  url_df$viaf <- map_chr(url_df$urls, get_viaf_number)
+
+test_urls$gender <- map2_chr(test_urls$author, test_urls$title, get_gender)
+library(rgoodreads)
+
+# goodreads api is about 2x faster right now, but it missed ~ 20% of my personal dataset alone, so I need to use both.
+# I'll use goodreads api first, and if it doesn't get a return value, I'll use the oclassify method.
+
+scrape_genders <- function(df){
+  # scraping is slow--make sure I'm not doing one author multiple times. This is also nice to the websites.
+  distinct_authors <- df %>%
+    distinct(author, .keep_all = TRUE)
   
-  # use these scraped viafs to return the gender of the author as a new variable to the input df
-  url_df$gender <- map_chr(url_df$viaf, get_gender)
-  url_df
+  results <- map_df(distinct_authors$author, author_by_name)%>%
+    select(name, gender)%>%
+    inner_join(distinct_authors, by = c("name" = "author"))%>%
+    mutate(gender = ifelse(gender == "", NA, gender))
+  # 
+  # second_pass <- results%>%
+  #   filter(is.na(gender))
+  # 
+  # second_pass$gender <- map2_chr(second_pass$name, second_pass$title, get_gender)
+  # 
+  # final <- results%>%
+  #   filter(!is.na(gender))%>%
+  #   bind_rows(second_pass)
+  # 
+  # final
+  results
+
 }
 
-df <- get_all_genders(urls)
-
-
-for(i in 1:length(test_urls)){
-  print(paste0("Book ", i, " ", Sys.time()))  
+put_together <- function(author = NULL, title = NULL){
+  paste0(author, title)
 }
+
+df <- tibble(a = 1:5, b = c("male", NA, "female", NA, "male"))
+df %>%
+  mutate(b = ifelse(is.na(b), by_2(a), b))
+
+m %>%
+  mutate(gender = ifelse(is.na(gender), map2_chr(name, title, get_gender), gender))%>%
+  View()
+
+map_if(m$gender, is.na, get_gender, m$name, m$title,.verbose = FALSE, .else = gender)
 ```
 
 
