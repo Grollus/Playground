@@ -258,38 +258,44 @@ scrape_genders <- function(df){
   distinct_authors <- df %>%
     distinct(author, .keep_all = TRUE)
   
+  print("Scraping genders available from Goodreads API")
+  print(Sys.time())
   results <- map_df(distinct_authors$author, author_by_name)%>%
     select(name, gender)%>%
     inner_join(distinct_authors, by = c("name" = "author"))%>%
-    mutate(gender = ifelse(gender == "", NA, gender))
-  # 
-  # second_pass <- results%>%
-  #   filter(is.na(gender))
-  # 
-  # second_pass$gender <- map2_chr(second_pass$name, second_pass$title, get_gender)
-  # 
-  # final <- results%>%
-  #   filter(!is.na(gender))%>%
-  #   bind_rows(second_pass)
-  # 
-  # final
-  results
+    mutate(gender = ifelse(gender == "", NA, tolower(gender)))
+
+  second_pass <- results%>%
+    filter(is.na(gender))
+  # scrape those genders not found on goodreads api from the oclassify method
+  print("Scraping genders not found through Goodreads API")
+  print(Sys.time())
+  second_pass$gender <- tolower(map2_chr(second_pass$name, second_pass$title, get_gender))
+  print(Sys.time())
+  
+  final <- results%>%
+    filter(!is.na(gender))%>%
+    bind_rows(second_pass)
+
+  final
 
 }
 
-put_together <- function(author = NULL, title = NULL){
-  paste0(author, title)
-}
+all_authors <- scrape_genders(test_copy)
 
-df <- tibble(a = 1:5, b = c("male", NA, "female", NA, "male"))
-df %>%
-  mutate(b = ifelse(is.na(b), by_2(a), b))
+tagged_books <- all_authors %>%
+  select(name, gender)%>%
+  inner_join(books, by = c("name" = "author"))%>%
+  distinct(title, .keep_all = TRUE)
 
-m %>%
-  mutate(gender = ifelse(is.na(gender), map2_chr(name, title, get_gender), gender))%>%
-  View()
+books%>%
+  filter(!books$title %in% tagged_books$title)
 
-map_if(m$gender, is.na, get_gender, m$name, m$title,.verbose = FALSE, .else = gender)
+l_tagged_books <- laura_df%>%
+  select(name, gender)%>%
+  inner_join(laura, by = c("name" = "author"))%>%
+  distinct(title, .keep_all = TRUE)
+
 ```
 
 
