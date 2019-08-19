@@ -269,16 +269,25 @@ beer_style_conf_int <- by_beerid%>%
   # unnest all this information into a nice tidy df
   unnest(map(model, tidy))
 
-beer_style_conf_int%>%
+temp <- beer_style_conf_int%>%
+  top_n(15, estimate)
+
+temp2 <- beer_style_conf_int%>%
+  top_n(-15, estimate)
+
+temp3 <- bind_rows(temp, temp2)
+  
+temp3%>%
   # reorder beers by estimated overall score
   mutate(beer_style = fct_reorder(beer_style, estimate))%>%
   # select top 20 beers
-  top_n(20, estimate)%>%
+  # top_n(20, estimate)%>%
   ggplot(aes(estimate, beer_style))+
   geom_point()+
   # errorbarh creates the 'tiefighter' style graph I like for confidence intervals
   geom_errorbarh(aes(xmin = conf.low,
                      xmax = conf.high))+
+  geom_hline(yintercept = 15.5, linetype = 'dashed')+
   labs(x = "Overall Review Score",
        y = "",
        title = "Top 20 Beer Styles",
