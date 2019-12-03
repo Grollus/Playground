@@ -1,0 +1,166 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)     
+library(ggplot2)   
+
+# Modeling process packages
+library(rsample)   
+library(caret)     
+library(h2o)       
+
+# h2o set-up 
+h2o.no_progress()  
+h2o.init()         
+```
+
+```{r}
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+
+#build a knn model using caret
+cv <- trainControl(
+  method = 'repeatedcv', #resampling method
+  number = 10, # 10-fold cv
+  repeats = 5 #repeated 5 times
+)
+
+#using a grid search to tune hyperparameter values
+hyper_grid <- expand.grid(k = seq(2, 25, by = 1))
+
+# tune the knn model using grid search specified above
+knn_fit <- train(
+  Sale_Price ~ .,
+  data = ames_train,
+  method = 'knn',
+  trControl = cv,
+  tuneGrid = hyper_grid,
+  metric = "RMSE"
+)
+```
+
+
+Now to look at some feature engineering
+```{r}
+library(visdat)
+library(recipes)
+```
+
+##Target Engineering
+Applying log transform can help with preditions on right/positively skewed data. Good to use recipes to package this
+into a reproducible step.
+```{r}
+ames_recipe <- recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_log(all_outcomes())
+
+ames_recipe
+```
+
+## Dealing with Missing Data
+```{r}
+# this is original version of ames before the missing data was removed.
+ames_missing <- AmesHousing::ames_raw
+
+ames_missing%>%
+  is.na()%>%
+  reshape2::melt()%>%
+  ggplot(aes(Var2, Var1, fill = value))+
+  geom_raster()+
+  coord_flip()+
+  scale_y_continuous(NULL, expand = c(0,0))+
+  scale_fill_grey(name = "",
+                  labels = c("Present",
+                             "Missing"))+
+  xlab("Observation")+
+  theme(axis.text.y = element_text(size = 6))
+
+# using visdat to visualize missingness
+vis_miss(ames_missing, cluster = TRUE)
+```
+
+### Imputation of missing values
+```{r}
+#Using median value for missing data; done within the resampling process. Added step to recipe
+ames_recipe%>%
+  step_medianimpute(Gr_Liv_Area)
+
+# knn imputation; adding step to recipe
+ames_recipe%>%
+  step_knnimpute(all_predictors(), neighbors = 6)
+
+# bagged decision tree imputation
+ames_recipe %>%
+  step_bagimpute(all_predictors())
+```
+
+## Feature Filtering
+Dealing with near-zero variance variables
+```{r}
+# can add this near-zero variance filtering step to recipe if we want with step_nzv()
+caret::nearZeroVar(ames_train, saveMetrics = TRUE)%>%
+  tibble::rownames_to_column()%>%
+  filter(nzv)
+```
+
+## Numeric feature engineering
+Should add these adjustments to your recipe when they are used.
+### Skewness
+```{r}
+#normalize all numeric columns
+recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_YeoJohnson(all_numeric())
+```
+
+### Standardization
+```{r}
+ames_recipe%>%
+  step_center(all_numeric(), -all_outcomes())%>%
+  step_scale(all_numeric(), -all_outcomes())
+```
+
+## Categorical feature engineering
+
+### Lumping
+Grouping together feature responses that have few observations can be the correct call in certain situations
+```{r}
+# lumping two features 
+lumping <- recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_other(Neighborhood, threshold = .01,
+             other = "other")%>%
+  step_other(Screen_Porch, threshold = .1,
+             other = ">0")
+
+# applying this blueprint
+apply_2_training <- prep(lumping, training = ames_train)%>%
+  bake(ames_train)
+
+#old v new distribution of neighborhood and screen_porch
+count(apply_2_training, Neighborhood)%>%
+  arrange(n)
+
+count(ames_train, Neighborhood)%>%
+  arrange(n)
+```
+
+### One-hot and Dummy Encoding
+```{r}
+recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_dummy(all_nominal(), one_hot = TRUE)
+```
+
+
+
