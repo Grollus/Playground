@@ -10,7 +10,7 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(dplyr)     
 library(ggplot2)   
-
+theme_set(theme_minimal())
 # Modeling process packages
 library(rsample)   
 library(caret)     
@@ -162,5 +162,91 @@ recipe(Sale_Price ~ ., data = ames_train)%>%
   step_dummy(all_nominal(), one_hot = TRUE)
 ```
 
+### Label encoding
+```{r}
+# Original categories
+count(ames_train, MS_SubClass)
+
+# Label encoded
+recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_integer(MS_SubClass)%>%
+  prep(ames_train)%>%
+  bake(ames_train)%>%
+  count(MS_SubClass)
+```
+MS_SubClass doesn't have an intuitive, natural ordering, so label encoding could cause some problems if you blindly model.
+Overall_Qual *does* have a natural order, so label encoding is a perfect fit.
+```{r}
+count(ames_train, Overall_Qual)
+
+recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_integer(Overall_Qual)%>%
+  prep(ames_train)%>%
+  bake(ames_train)%>%
+  count(Overall_Qual)
+
+```
+
+## Entired Feature Engineering Pipeline Using Recipes
+With recipes you establish a "recipe" for your preprocessing (and modeling), which you then need to "prep",
+and later "bake".
+
+```{r}
+# recipe: define your feature engineering steps to create the blueprint
+blueprint <- recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_nzv(all_nominal())%>%  # remove near-zero variance variables--all numeric features
+  step_integer(matches("Qual|Cond|QC|Qu"))%>%  # ordinal encode quality based features
+  step_center(all_numeric(), -all_outcomes())%>%  # center all numeric features
+  step_scale(all_numeric(), -all_outcomes())%>%  # scale all numeric features
+  step_pca(all_numeric(), -all_outcomes())  # perform pca to reduce the dimensions--applies to all numeric features
+  
+# prep: estimate feature engineering parameters on specified data--will be training data
+# don't want to estimate parameters using test data because things like standardization and PCA would leak data
+prepare <- prep(blueprint, training = ames_train)
+
+# bake: apply the blueprint to new data. could be training data or test data
+baked_train <- bake(prepare, new_data = ames_train)
+baked_test <- bake(prepare, new_data = ames_test)
+
+baked_train
+```
+
+So you want to develop the blueprint, then within each resampling iteration you apply prep and bake to 
+the resample training and validation data. Caret does most of this work for you--you just need to specify the blueprint 
+and caret will prepare and bake within each resample.
+
+```{r}
+blueprint <- recipe(Sale_Price ~ ., data = ames_train)%>%
+  step_nzv(all_nominal())%>%  # remove near-zero variance variables--all numeric features
+  step_integer(matches("Qual|Cond|QC|Qu"))%>%  # ordinal encode quality based features
+  step_center(all_numeric(), -all_outcomes())%>%  # center all numeric features
+  step_scale(all_numeric(), -all_outcomes())%>%  # scale all numeric features
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)  # one-hot encode categorical features not handled earlier
+
+# now apply the resampling method and hyperparameter search grid we did earlier
+# specify resampling plan
+cv <- trainControl(
+  method = 'repeatedcv',
+  number = 10,
+  repeats = 5
+)
+
+# construct grid of hyperparameters
+hyper_grid <- expand.grid(k = seq(2, 25, by = 1))
+
+# tune a knn model using grid search
+knn_fit2 <- train(
+  blueprint,  # this is where the blueprint is applied
+  data = ames_train,
+  method = 'knn',
+  trControl = cv,
+  tuneGrid = hyper_grid,
+  metric = "RMSE"
+)
+
+knn_fit2
+
+ggplot(knn_fit2)
+```
 
 

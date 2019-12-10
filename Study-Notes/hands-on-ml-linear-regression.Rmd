@@ -1,0 +1,294 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(rsample)
+library(caret)
+theme_set(theme_minimal())
+#model interpretation package
+library(vip)
+```
+
+Build the ames data set for use
+```{r}
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+```
+
+
+Basic linear model fitting with base R
+```{r}
+model1 <- lm(Sale_Price ~ Gr_Liv_Area, data = ames_train)
+preds <- predict(model1)
+# this is an awful way to plot residuals--takes forever. 
+ames_train %>%
+  ggplot(aes(x = Gr_Liv_Area, y = Sale_Price, alpha = .3))+
+  geom_point()+
+  geom_line(aes(y = preds), size = 1, alpha = 1, color = 'blue')+
+  geom_segment(aes(xend = Gr_Liv_Area, yend = preds), data = ames_train)+
+  theme(legend.position = 'none')+
+  scale_y_continuous(labels = scales::comma_format())
+
+summary(model1)
+
+# RMSE
+sigma(model1)
+# MSE
+sigma(model1)^2
+
+# confidence intervals for coefficients
+confint(model1, level = .95)
+```
+
+Basic multiple linear regression model fitting
+```{r}
+model2 <- lm(Sale_Price ~ Gr_Liv_Area + Year_Built, data = ames_train)
+model2
+
+# can also take advantage of 'update' to just update model1. Handy with long model inputs
+model2 <- update(model1, . ~ . + Year_Built)
+model2
+```
+
+Including interaction effects in a linear model. This is one way to model curvature in the data.
+```{r}
+# can also use '*" to add an interaction term
+lm(Sale_Price ~ Gr_Liv_Area + Year_Built + Gr_Liv_Area:Year_Built, data = ames_train)
+```
+
+Including all feature variables in a multiple linear regression model
+```{r}
+model3 <- lm(Sale_Price ~ ., data = ames_train)
+model3
+
+# with this many variables, plain print statement is unreadable. Use broom instead
+View(broom::tidy(model3))
+```
+
+## Assessing Model Accuracy
+
+One big advantage of using caret over base lm is the built in cv functionality.
+```{r}
+set.seed(123)
+# train model with 10 fold cv
+cv_model1 <- train(
+  form = Sale_Price ~ Gr_Liv_Area,
+  data = ames_train,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_model1
+
+
+# model 2 cv
+set.seed(123)
+cv_model2 <- train(
+  Sale_Price ~ Gr_Liv_Area + Year_Built,
+  data = ames_train,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_model2
+
+# model 3 cv
+set.seed(123)
+cv_model3 <- train(
+  Sale_Price ~ .,
+  data = ames_train,
+  method = 'lm',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+cv_model3
+
+# getting out of sample performance measures. This is necessary to actually see how model will do on new data
+summary(resamples(list(
+  model1 = cv_model1,
+  model2 = cv_model2,
+  model3 = cv_model3
+)))
+```
+
+According to this, it's possible that a model with all variables is the best performing model
+
+
+## Model Concerns
+
+### Lack of Linear relationship between predictor and response
+
+```{r}
+ggplot(ames_train, aes(Year_Built, Sale_Price))+
+  geom_point(size = 1, alpha = .4)+
+  geom_smooth(se = FALSE)+
+  scale_y_continuous("Sale Price", labels = scales::dollar)+
+  xlab("Year Built")+
+  ggtitle(paste("Non-transformed variables with a\n",
+                "non-linear relationship"))
+
+ggplot(ames_train, aes(Year_Built, Sale_Price))+
+  geom_point(size = 1, alpha = .4)+
+  geom_smooth(method = 'lm',se = FALSE)+
+  scale_y_log10("Sale Price", labels = scales::dollar,
+                     breaks = seq(0, 400000, by = 100000))+
+  xlab("Year Built")+
+  ggtitle(paste("Transforming variables can provide a\n",
+                "near-linear relationship"))
+
+```
+
+### Constant Variance Among Residuals
+
+```{r}
+# Use broom to add model results to observation data frame
+df1 <- broom::augment(cv_model1$finalModel, data = ames_train)
+
+p1 <- ggplot(df1, aes(.fitted, .resid))+
+  geom_point(size=1, alpha =1)+
+  xlab("Predicted values")+
+  ylab("Residuals")+
+  ggtitle("Model 1", 
+          subtitle = "Sale Price ~ Gr_Liv_Area")
+
+df2 <- broom::augment(cv_model3$finalModel, data = ames_train)
+
+p2 <- ggplot(df2, aes(.fitted, .resid))+
+  geom_point(size =1, alpha = .4)+ 
+  xlab("Predicted values")+
+  ylab("Residuals")+
+  ggtitle("Model 3", 
+          subtitle = "Sale_Price ~ .")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+```
+
+Model one is clearly heteroskedastic(ie non-constant variance), but model 3 looks potentially OK. There is 
+some variance there, but it's probably within the OK realm.
+
+### No autocorrelation
+
+```{r}
+df1 <- mutate(df1, id = row_number())
+df2 <- mutate(df2, id = row_number())
+
+p1 <- ggplot(df1, aes(id, .resid))+
+  geom_point(size = 1, alpha = .4) +
+  xlab("Row ID")+
+  ylab("Residuals")+
+  ggtitle("Model 1", subtitle = "Correlated Residuals")
+
+p2 <- ggplot(df2, aes(id, .resid))+
+  geom_point(size = 1, alpha = .4)+
+  xlab("Row ID")+
+  ylab("Residuals")+
+  ggtitle("Model 3", subtitle = "Uncorrelated Residuals")
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+```
+
+Model 1 clearly displays autocorrelation--the pattern in the residuals indicates it. Model 3--which includes the 
+neighborhood does not show autocorrelation.
+
+### No or little Multicollinearity
+
+```{r}
+#Fit model with strongly correlated variable
+summary(cv_model3)%>%
+  broom::tidy()%>%
+  filter(term %in% c("Garage_Area", "Garage_Cars"))
+
+# Garage Area is significant with that model
+
+# model without garage area
+set.seed(123)
+mod_wo_Garage_Cars <- train(
+  Sale_Price ~ .,
+  data = select(ames_train, -Garage_Area),
+  method = "lm",
+  trControl = trainControl(method = "cv", number = 10)
+)
+
+summary(mod_wo_Garage_Cars)%>%
+  broom::tidy()%>%
+  filter(term ==  "Garage_Cars")
+
+# Now garage_cars is very significant. Thus the misleading nature of variables when collinearity is present.
+```
+
+
+## Performing Principal component regression
+```{r}
+# Perform 10 fold cross validation on a PCR model tuning
+# the number of principal components to use as predictors from 1-20
+
+set.seed(123)
+cv_model_pcr <- train(
+  Sale_Price ~ .,
+  data = ames_train,
+  method = "pcr",
+  trControl = trainControl(method = "cv", number = 10),
+  preProcess = c("zv", "center", "scale"),
+  tuneLength = 20
+)
+
+#model with the lowest RMSE
+cv_model_pcr$bestTune
+
+# plot cv RMSE
+ggplot(cv_model_pcr)
+```
+
+## Partial Least Squares
+Easily fit PLS with caret just by changing the method argument
+```{r}
+set.seed(123)
+cv_model_pls <- train(
+  Sale_Price ~.,
+  data = ames_train,
+  method = "pls",
+  trControl = trainControl(method = "cv", number = 10),
+  preProcess = c("zv", "center", "scale"),
+  tuneLength = 20
+)
+
+cv_model_pls$bestTune
+
+ggplot(cv_model_pls)
+```
+Compared to PCR the RMSE is lower--because component features have a relation to the response variable
+
+
+## Feature Interpretation 
+Feature interpretation of linear models is pretty easy with vip package
+```{r}
+vip(cv_model_pls, num_features = 20, method = 'model')
+```
+This gives you the most important variables in the model according to their --in PLS case--reduction in RSS.
+
+Can also construct partial dependency plots (PDP) that plot the change in the average predicted value as the specified
+feature varies over it's marginal distribution.
+
+This is useful with linear models, but is *much* more useful with non-linear models/non-linear relationships.
+With linear models it will show how a fixed change in x_i relates to a fixed linear change in yhat_i while taking
+into account the average effect of all the other features in the model.
+
+```{r}
+pdp::partial(cv_model_pls, "Gr_Liv_Area", grid.resolution = 20, plot = TRUE)
+```
+
