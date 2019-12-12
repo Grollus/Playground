@@ -1,0 +1,175 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(rsample)
+library(caret)
+library(vip)
+theme_set(theme_minimal())
+```
+
+
+Loading attrition data set to be used with these notes
+
+```{r}
+# turn ordered.factor variables into undered factor variables
+df <- attrition %>%
+  mutate_if(is.ordered, factor, ordered = FALSE)
+
+# create training and testing data splits
+set.seed(123)
+churn_split <- initial_split(df, prop = .7, strata = "Attrition")
+churn_train <- training(churn_split)
+churn_test <- testing(churn_split)
+```
+
+## Simple Logistic Regression fitting
+
+Fitting the basic logistic regression is easily done with glm
+
+```{r}
+model1 <- glm(Attrition ~ MonthlyIncome, family = 'binomial', data = churn_train)
+
+model2 <- glm(Attrition ~ OverTime, family = 'binomial', data = churn_train)
+
+# Viewing the output of the logistic model and interpretting the results
+broom::tidy(model1)
+broom::tidy(model2)
+
+# easier to interpret these coefficients when they are not in log scale--need to exponentiate them
+exp(coef(model1))
+exp(coef(model2))
+```
+
+Can generate confidence intervals just like in linear regression. Note that these are only valid if the normal assumptions hold.
+If they do not then you'll want to generate confidence intervals with bootstrapping
+
+```{r}
+# exponentiated
+exp(confint(model1))
+# still on the log scale
+confint(model2)
+```
+
+## Multiple Logistic Regression
+
+```{r}
+model3 <- glm(
+  Attrition ~ MonthlyIncome + OverTime,
+  family = 'binomial',
+  data = churn_train
+)
+
+broom::tidy(model3)
+
+```
+
+## Assessing Model Accuracy
+Fitting everything with caret again
+```{r}
+set.seed(123)
+cv_model1 <- train(
+  Attrition ~ MonthlyIncome,
+  data = churn_train,
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+set.seed(123)
+cv_model2 <- train(
+  Attrition ~ MonthlyIncome + OverTime,
+  data = churn_train,
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+set.seed(123)
+cv_model3 <- train(
+  Attrition ~ .,
+  data = churn_train,
+  method = 'glm',
+  family = 'binomial',
+  trControl = trainControl(method = 'cv', number = 10)
+)
+
+# extract out of sample performance metrics
+summary(
+  resamples(
+    list(
+      model1 = cv_model1,
+      model2 = cv_model2,
+      model3 = cv_model3
+    )
+  )
+)$statistics$Accuracy
+```
+
+Accuracy isn't a great metric alone, so look to something like a confusion matrix or AUC--both of which can be done in caret.
+
+```{r}
+# must supply the model's predicted class and the actuals from the data you used--training data here.
+
+# predict class model 1
+pred_class1 <- predict(cv_model1, churn_train)
+
+# create the confusion matrix model 1
+confusionMatrix(
+  data = relevel(pred_class1, ref = "Yes"),
+  reference = relevel(churn_train$Attrition, ref = "Yes")
+)
+
+
+# predict class model 3
+pred_class <- predict(cv_model3, churn_train)
+
+# create the confusion matrix model 3
+confusionMatrix(
+  data = relevel(pred_class, ref = "Yes"),
+  reference = relevel(churn_train$Attrition, ref = "Yes")
+)
+
+# no-information rate is the rate of non event to event in the training data. If you simply predicted
+# no event on everything you'd get the no-information rate as your accuarcy. Your goal should be to maximize
+# accuracy over this no-information rate while having a balance of sensitivity and specificity.
+
+# You see this sensitivity/specificity balance with an ROC curve.
+library(ROCR)
+# compute predicted probabilities
+m1_prob <- predict(cv_model1, churn_train, type = "prob")$Yes
+m3_prob <- predict(cv_model3, churn_train, type = 'prob')$Yes
+
+# compute AUC metrics for both models; this is FPR on the x and TPR on the y
+perf1 <- prediction(m1_prob, churn_train$Attrition)%>%
+  performance(measure = "tpr", x.measure = 'fpr')
+perf2 <- prediction(m3_prob, churn_train$Attrition)%>%
+  performance(measure = "tpr", x.measure = 'fpr')
+
+# Plot ROC curve for both models
+plot(perf1, col = 'black', lty =2)
+plot(perf2, add = TRUE, col = 'blue')
+legend(.8, .2, legend = c("cv_model1", "cv_model3"),
+       col = c("black", "blue"), lty = 2:1, cex = .6)
+```
+
+
+## Feature Interpretation
+```{r}
+vip(cv_model3, num_features = 20)
+```
+
+
+Partial dependency plot of the top features
+```{r}
+pdp::partial(cv_model3, "EnvironmentSatisfaction", prob = TRUE, grid.resolution = 20, plot = TRUE)
+```
+
