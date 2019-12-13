@@ -1,0 +1,170 @@
+---
+title: "MARS"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(earth) # fits MARS models
+library(caret)
+library(vip)
+library(pdp)
+theme_set(theme_minimal())
+
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+```
+
+
+*Earth* package will fit MARS models. Default function will assess all potential knots and then prune based on 
+expected change in R^2 less than 0.001.
+
+#Basic MARS fit
+```{r}
+mars1 <- earth(
+  Sale_Price ~ .,
+  data = ames_train
+)
+
+print(mars1)
+
+summary(mars1) %>% .$coefficients %>% head(10)
+```
+
+The model hinges are shown in the h(feature-?) term when viewing the coefficients. So, for example,
+there is a hinge knot at Gr_Liv_Are 1194.
+
+Base plot function will show performance and residual plots
+```{r}
+plot(mars1)
+# first plot is showing model selection using generalized cross validated R^2 based on the number of terms in the model
+```
+
+Earth can also include interactions between hinge functions.
+
+```{r}
+# MARS model with degree 2 interaction terms.
+mars2 <- earth(
+  Sale_Price ~ .,
+  data = ames_train,
+  degree = 2
+)
+
+# summary of the first 10 coefficients
+summary(mars2) %>% .$coefficients %>% head(10)
+
+summary(mars2)
+plot(mars2)
+```
+
+
+## Tuning
+A proper MARS model is tuning using CV grid search--the early simple models trained was pruned only on approx. CV model performance
+on training data--which we know is not a good idea.
+
+```{r}
+# tuning grid
+hyper_grid <- expand.grid(
+  degree = 1:3,
+  nprune = seq(2, 100, length.out = 10)%>% floor()
+)
+
+head(hyper_grid)
+
+# caret is used to do the model training
+set.seed(123)
+cv_mars <- train(
+  x = subset(ames_train, select = -Sale_Price),
+  y = ames_train$Sale_Price,
+  method = "earth",
+  metric = "RMSE",
+  trControl = trainControl(method = 'cv', number = 10),
+  tuneGrid = hyper_grid
+)
+
+# looking at parameters of best RMSE model
+cv_mars$bestTune
+
+ggplot(cv_mars)
+```
+
+## Feature Interpretation
+
+```{r}
+# variable importance plots
+p1 <- vip(cv_mars, num_features = 40, bar = FALSE, value = 'gcv') + ggtitle("GCV")
+p2 <- vip(cv_mars, num_features = 40, bar = FALSE, value = 'rss') + ggtitle("RSS")
+
+gridExtra::grid.arrange(p1, p2, ncol =2)
+```
+Using gcv or rss produces essentially the same selection of features.
+
+
+Variable importance only measure the impact of the prediction error as features are added. It doesn't measure
+the impact for particular hinge functions created for a given feature. we can see that those two terms are important,
+but we can't see how the non-linear patterns for those features are handled.
+
+```{r}
+# extract coef., convert to tidy df and filter for interaction terms
+cv_mars$finalModel%>%
+  coef()%>%
+  broom::tidy()%>%
+  filter(stringr::str_detect(names, "\\*"))
+```
+
+PDP plots to examine relationship of interaction terms
+```{r}
+# Construct partial dependence plots
+p1 <- partial(cv_mars, pred.var = "Gr_Liv_Area", grid.resolution = 10) %>% 
+  autoplot()
+p2 <- partial(cv_mars, pred.var = "Year_Built", grid.resolution = 10) %>% 
+  autoplot()
+p3 <- partial(cv_mars, pred.var = c("Gr_Liv_Area", "Year_Built"), 
+              grid.resolution = 10) %>% 
+  plotPartial(levelplot = FALSE, zlab = "yhat", drape = TRUE, colorkey = TRUE, 
+              screen = list(z = -20, x = -60))
+
+# Display plots side by side
+gridExtra::grid.arrange(p1, p2, p3, ncol = 3)
+```
+
+## MARS Classification Implementation
+```{r}
+# attrition data
+df <- rsample::attrition %>%
+  mutate_if(is.ordered, factor, ordered = FALSE)
+
+set.seed(123)
+churn_split <- rsample::initial_split(df, prop = .7, strata = "Attrition")
+churn_train <- rsample::training(churn_split)
+churn_test  <- rsample::testing(churn_split)
+
+set.seed(123)
+#cv model
+tuned_mars <- train(
+  x = subset(churn_train, select = -Attrition),
+  y = churn_train$Attrition,
+  method = 'earth',
+  trControl = trainControl(method = 'cv', number = 10),
+  tuneGrid = hyper_grid
+)
+
+# best model
+tuned_mars$bestTune
+
+ggplot(tuned_mars)
+
+```
+
