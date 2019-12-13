@@ -1,0 +1,237 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(recipes)
+library(glmnet)
+library(caret)
+library(vip)
+library(rsample)
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+```
+
+##Implementations of Regularized Regression
+Using glmnet as the engine. glmnet is fast, but have to separate feature and target data before using
+
+```{r}
+# create the training features matrix
+# model.matrix()[, -1] discards the intercept term
+X <- model.matrix(Sale_Price ~ ., ames_train)[, -1]
+
+# transform y with a log transform. The data is skewed and models with distributional assumptions often can benefit from log transform
+Y <- log(ames_train$Sale_Price)
+
+
+# alpha control the type of regularization
+## alpha = 0 -- ridge regression
+## alpha = 1 -- lasso regression
+## 0 < alpha < 1 -- elastic net regression
+
+# Applying ridge regression to ames
+ridge <- glmnet(
+  x = X,
+  y = Y, 
+  alpha = 0
+)
+
+# by default, glmnet will fit models with a range of lambda values
+plot(ridge, xvar = 'lambda')
+
+# seeing the lambda values
+ridge$lambda
+
+# small lambda will result in large coefficients
+coef(ridge)[c("Latitude", "Overall_QualVery_Excellent"), 100]
+
+# large lambda will result in small coeffs
+coef(ridge)[c("Latitude", "Overall_QualVery_Excellent"), 1]
+
+```
+
+So the model is fit, but how do you tune it and then assess how well the model is actually predicting?
+
+With regularization, lambda is a tuning parameter that essentially controls model bias. So it can help
+tune our model so we aren't over-fitting. As usual, use k-fold cv to identify the optimal lambda value
+```{r}
+# type.measure controls which loss function is used
+# applying cross-validation ridge regression
+ridge <- cv.glmnet(
+  x = X,
+  y = Y,
+  alpha = 0
+)
+
+# apply cross-validation lasso regression
+lasso <- cv.glmnet(
+  x = X, 
+  y = Y,
+  alpha = 1
+)
+
+# results
+par(mfrow = c(1, 2))
+plot(ridge, main = 'Ridge penalty\n')
+plot(lasso, main = 'Lasso penalty\n')
+```
+
+First vertical dotted line represents the lambda with the minimum MSE. Second dotted line is the largest lambda withing one
+standard deviation of the minimum MSE.
+
+```{r}
+# ridge model
+# minimum MSE
+min(ridge$cvm)
+
+# lambda at minimum MSE
+ridge$lambda.min
+
+# 1 SE MSE
+ridge$cvm[ridge$lambda == ridge$lambda.1se]
+# lambda for this 1 SE MSE
+ridge$lambda.1se
+
+
+# lasso model
+# minimum MSE
+min(lasso$cvm)
+# lambda at min MSE
+lasso$lambda.min
+
+# 1 SE MSE
+lasso$cvm[lasso$lambda == lasso$lambda.1se]
+# lambda at 1 SE MSE
+lasso$lambda.1se
+
+```
+
+Visualizing the coefficients of the lasso and ridge models with different values of lambda
+
+```{r}
+# Ridge model
+ridge_min <- glmnet(
+  x = X,
+  y = Y,
+  alpha = 0
+)
+
+# Lasso model
+lasso_min <- glmnet(
+  x = X,
+  y = Y,
+  alpha = 1
+)
+
+par(mfrow = c(1, 2))
+#ridge
+plot(ridge_min, xvar = 'lambda', main = 'Ridge penalty\n')
+abline(v = log(ridge$lambda.min), col = 'red', lty = 'dashed')
+abline(v = log(ridge$lambda.1se), col = 'blue', lty = 'dashed')
+#lasso
+plot(lasso_min, xvar = 'lambda', main = 'Lasso penalty\n')
+abline(v = log(lasso$lambda.min), col = 'red', lty = 'dashed')
+abline(v = log(lasso$lambda.1se), col = 'blue', lty = 'dashed')
+
+```
+
+Implementing Elastic net is as easy as adjusting the alpha perimeter. alpha = .5 will have L1 and L2 penalities equal,
+but alpha < .5 will have a heavy ridge penalty and a lower lasso. alpha > .5 will have a heavy lasso penalty and a lower ridge.
+
+Typically, you will need to tune alpha and lambda to get an optimal model. You can use caret to do this--or recipes.
+
+```{r}
+# grid search over 10 values of alpha and 10 values of lambda
+set.seed(123)
+# grid search
+cv_glmnet <- train(
+  x = X,
+  y = Y,
+  method = 'glmnet',
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = 'cv', number = 10),
+  tuneLength = 10
+)
+
+# model with lowest RMSE
+cv_glmnet$bestTune
+
+# plot cv RMSE
+ggplot(cv_glmnet)
+```
+
+This is all on log scale right now, so need to exponentiate to compare to early models
+
+```{r}
+# predict sales on training data
+pred <- predict(cv_glmnet, X)
+
+# compute RMSE (using caret) of transformed predicted
+RMSE(exp(pred), exp(Y))
+```
+
+## Feature Interpretation
+
+Feature Interpretation is just as important in a regularized model. It works similar to standard OLS. Importance 
+is determined by magnitude of standardized coefficents
+```{r}
+vip(cv_glmnet, num_features = 20)
+
+pdp::partial(cv_glmnet, "Gr_Liv_Area", grid.resoluation = 20, inv.link = exp,plot = TRUE)
+```
+
+# Regularized Logistic Regression
+
+```{r}
+df <- attrition %>%
+  mutate_if(is.ordered, factor, ordered = FALSE)
+
+set.seed(123)
+churn_split <- initial_split(df, prop = .7, strata = "Attrition")
+train <- training(churn_split)
+test  <- testing(churn_split)
+
+# train logistic regression
+set.seed(123)
+glm_mod <- train(
+  Attrition ~ ., 
+  data = train, 
+  method = "glm",
+  family = "binomial",
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = "cv", number = 10)
+  )
+
+# train regularized logistic regression
+set.seed(123)
+penalized_mod <- train(
+  Attrition ~ .,
+  data = train,
+  method = 'glmnet',
+  family = 'binomial',
+  preProc = c("zv", "center", "scale"),
+  trControl = trainControl(method = 'cv', number = 10),
+  tuneLength = 10
+)
+
+summary(resamples(list(
+  logistic_mod = glm_mod,
+  penalized_mod = penalized_mod
+)))$statistics$Accuracy
+
+```
+
+
+
