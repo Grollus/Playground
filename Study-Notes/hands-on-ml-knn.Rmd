@@ -1,0 +1,226 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(dplyr)
+library(ggplot2)
+library(rsample)
+library(recipes)
+library(caret)
+theme_set(theme_minimal())
+
+# create training (70%) set for the rsample::attrition data.
+attrit <- attrition %>% mutate_if(is.ordered, factor, ordered = FALSE)
+set.seed(123)
+churn_split <- initial_split(attrit, prop = .7, strata = "Attrition")
+churn_train <- training(churn_split)
+
+# import MNIST training data
+mnist <- dslabs::read_mnist()
+names(mnist)
+
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+```
+
+## Distance Measures
+```{r}
+(two_houses <- ames_train[1:2, c("Gr_Liv_Area", "Year_Built")])
+
+# Euclidean Distance between those two points
+# default method is euclidean
+dist(two_houses, method = 'euclidean')
+
+# Manhattan
+dist(two_houses, method = 'manhattan')
+```
+
+
+## Choosing K and Fitting KNN model
+
+```{r}
+# create blueprint
+blueprint <- recipe(Attrition ~ ., data = churn_train) %>%
+  step_nzv(all_nominal())%>%
+  step_integer(contains("Satisfaction"))%>% # ordinal encoding satisfaction features
+  step_integer(WorkLifeBalance)%>% # ordinal encoding worklife balance
+  step_integer(JobInvolvement)%>% # ordinal encoding
+  step_dummy(all_nominal(), -all_outcomes(), one_hot = TRUE)%>% # one-hot encoding
+  step_center(all_numeric(), -all_outcomes()) %>% # center all numeric
+  step_scale(all_numeric(), -all_outcomes()) # scale all numeric
+
+#resampling method
+cv <- trainControl(
+  method = 'repeatedcv',
+  number = 10,
+  repeats = 5,
+  classProbs = TRUE, # compute class probabilities in each resample
+  summaryFunction = twoClassSummary
+)
+
+# grid for hyperparameter search
+hyper_grid <- expand.grid(
+  k = floor(seq(1, nrow(churn_train)/3, length.out = 20))
+)
+
+# fit knn model and perform grid search
+knn_grid <- train(
+  blueprint,
+  data = churn_train,
+  method = "knn",
+  trControl = cv,
+  tuneGrid = hyper_grid,
+  metric = "ROC"
+)
+
+ggplot(knn_grid)
+```
+
+A reasonable compromise on performance and compute time is a k near the elbow in the plot.
+
+### MNIST example
+Bigger data set, so training on a sample for illustration. MNIST is image data so features
+represent the (0-255) darkness of each pixel. Many of these will be zero or near zero variance--which 
+is a big issue for KNN models
+
+```{r}
+set.seed(123)
+
+index <- sample(nrow(mnist$train$images), size = 10000)
+mnist_x <- mnist$train$images[index, ]
+mnist_y <- factor(mnist$train$labels[index])
+
+# lots of nzv features
+mnist_x %>%
+  as.data.frame()%>%
+  purrr::map_df(sd)%>%
+  gather(feature, sd)%>%
+  ggplot(aes(sd))+
+  geom_histogram(binwidth = 1)
+
+```
+
+NZV features are representing the black edges of the image data. You can remove these to cut down the number of 
+features and improve performance.
+
+```{r}
+# rename features
+colnames(mnist_x) <- paste0("V", 1:ncol(mnist_x))
+
+# Remove nzv features
+nzv <- nearZeroVar(mnist_x)
+index <- setdiff(1:ncol(mnist_x), nzv)
+mnist_x <- mnist_x[, index]
+```
+
+```{r}
+# train/validation resampling method
+cv <- trainControl(
+  method = "LGOCV",
+  p = .7,
+  number = 1,
+  savePredictions = TRUE
+)
+
+# hyperparameter grid
+hyper_grid <- expand.grid(k = seq(3, 25, by = 2))
+
+# perform grid search
+knn_mnist <- train(
+  mnist_x,
+  mnist_y,
+  method = "knn", 
+  tuneGrid = hyper_grid,
+  preProc = c("center", "scale"),
+  trControl = cv
+)
+
+ggplot(knn_mnist)
+```
+
+Examining results
+```{r}
+# confusion matrix creation
+cm <- confusionMatrix(knn_mnist$pred$pred, knn_mnist$pred$obs)
+
+cm$byClass[, c(1:2, 11)] 
+# this gives sensitivity(how'd it do predicting the correct number)
+# specificity(how often is it misidentifying the digit)
+# accuracy--standard accuracy measure
+
+# feature importance--since multinomial, the features are sorted by importance across classes
+vi <- varImp(knn_mnist)
+vi
+```
+
+Can actually plot the feature importance results to see more intuitively what pixels are driving results
+```{r}
+# get median value for feature importance
+imp <- vi$importance %>%
+  tibble::rownames_to_column(var = "feature") %>%
+  gather(response, imp, -feature)%>%
+  group_by(feature)%>%
+  summarize(imp = median(imp))
+
+# create tibble for all edge pixels
+edges <- tibble(
+  feature = paste0("V", nzv),
+  imp = 0
+)
+
+# combine and plot
+imp <- rbind(imp, edges)%>%
+  mutate(ID = as.numeric(stringr::str_extract(feature, "\\d+")))%>%
+  arrange(ID)
+
+image(matrix(imp$imp, 28, 28), col = gray(seq(0, 1, 0.05)),
+      xaxt = 'n', yaxt = 'n')
+```
+
+Examining accurate and inaccurate predictions
+```{r}
+# some accurate predictions
+set.seed(9)
+good <- knn_mnist$pred %>%
+  filter(pred == obs)%>%
+  sample_n(4)
+
+# innaccurate predictions
+set.seed(9)
+bad <- knn_mnist$pred %>%
+  filter(pred != obs)%>%
+  sample_n(4)
+
+combine <- bind_rows(good, bad)
+
+# Get original feature set with all pixel features
+set.seed(123)
+index <- sample(nrow(mnist$train$images), 10000)
+X <- mnist$train$images[index,]
+
+# Plot results
+par(mfrow = c(4, 2), mar=c(1, 1, 1, 1))
+layout(matrix(seq_len(nrow(combine)), 4, 2, byrow = FALSE))
+for(i in seq_len(nrow(combine))) {
+  image(matrix(X[combine$rowIndex[i],], 28, 28)[, 28:1], 
+        col = gray(seq(0, 1, 0.05)),
+        main = paste("Actual:", combine$obs[i], "  ", 
+                     "Predicted:", combine$pred[i]),
+        xaxt="n", yaxt="n") 
+}
+```
+
+
