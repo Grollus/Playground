@@ -1,0 +1,147 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Helper packages
+library(dplyr)       # for data wrangling
+library(ggplot2)     # for awesome plotting
+library(doParallel)  # for parallel backend to foreach
+library(foreach)     # for parallel processing with for loops
+
+# Modeling packages
+library(caret)       # for general model fitting
+library(rpart)       # for fitting decision trees
+library(ipred)       # for fitting bagged decision trees
+library(rsample)
+theme_set(theme_minimal())
+
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+```
+
+Implementation of bagging on Ames data set: This uses ipred package
+```{r}
+set.seed(123)
+
+# train bagged model
+ames_bag1 <- bagging(
+  formula = Sale_Price ~ .,
+  data = ames_train,
+  nbagg = 100, # number of bootstrap replications--so this is a 100 bagged models
+  coob = TRUE, # TRUE indicates to use the OOB error rate
+  control = rpart.control(minsplit = 2, cp = 0)
+)
+
+ames_bag1
+```
+
+We can use caret to apply bagging and do cv as well. This takes a *long* time to run if not parallelized. 
+Performance metric is very similar to OOB estimate.
+```{r}
+ames_bag2 <- train(
+  Sale_Price ~ .,
+  data = ames_train,
+  method = 'treebag',
+  trControl = trainControl(method = 'cv', number = 10),
+  nbagg = 200,
+  control = rpart.control(minsplit = 2, cp = 0)
+  
+)
+
+ames_bag2
+```
+
+## Parallelize Bagging Model
+```{r}
+# create parallel socket cluster
+cl <- makeCluster(8) # use 8 workers
+registerDoParallel(cl) # register the backend
+
+# fit trees in parallel and compute predictions on test set
+predictions <- foreach(
+  icount(160), # 160 trees
+  .packages = 'rpart',
+  .combine = cbind
+) %dopar% {
+  # bootstrap copy of training data
+  index <- sample(nrow(ames_train), replace = TRUE)
+  ames_train_boot <- ames_train[index,]
+  
+  # fit tree to boostrap copy
+  bagged_tree <- rpart(
+    Sale_Price ~ .,
+    control = rpart.control(minsplit = 2, cp = 0),
+    data = ames_train_boot
+  )
+  
+  predict(bagged_tree, newdata = ames_test)
+}
+
+predictions[1:5, 1:7]
+```
+
+Need to wrangle the result to compute and plot RMSE
+
+```{r}
+predictions %>%
+  as.data.frame()%>%
+  mutate(
+    observation = 1:n(),
+    actual = ames_test$Sale_Price)%>%
+  tidyr::gather(tree, predicted, -c(observation, actual))%>% 
+  group_by(observation)%>%
+  mutate(tree = stringr::str_extract(tree, '\\d+') %>% as.numeric())%>%
+  ungroup()%>%
+  arrange(observation, tree)%>%
+  group_by(observation)%>%
+  mutate(avg_prediction = cummean(predicted))%>%
+  group_by(tree)%>%
+  summarize(RMSE = RMSE(avg_prediction, actual))%>%
+  ggplot(aes(tree, RMSE))+
+  geom_line()+
+  xlab("# of Trees")
+
+
+#always shutdown the cluster
+stopCluster(cl)
+```
+
+Using VIP to view feature importance
+```{r}
+vip::vip(ames_bag2, num_features = 40, bar = FALSE)
+```
+
+
+And partial dependency plots to see how the feature influences the output on average
+```{r}
+# Construct partial dependence plots
+p1 <- pdp::partial(
+  ames_bag2, 
+  pred.var = "Lot_Area",
+  grid.resolution = 20
+  ) %>% 
+  autoplot()
+
+p2 <- pdp::partial(
+  ames_bag2, 
+  pred.var = "Lot_Frontage", 
+  grid.resolution = 20
+  ) %>% 
+  autoplot()
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+```
+
