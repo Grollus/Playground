@@ -1,0 +1,101 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Helper packages
+library(dplyr)       # for data wrangling
+library(ggplot2)     # for awesome plotting
+theme_set(theme_minimal())
+# Modeling packages
+library(rpart)       # direct engine for decision tree application
+library(caret)       # meta engine for decision tree application
+
+# Model interpretability packages
+library(rpart.plot)  # for plotting decision trees
+library(vip)         # for feature importance
+library(pdp)         # for feature effects
+library(rsample)
+
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+```
+
+## Ames housing Example
+```{r}
+ames_dt1 <- rpart(
+  formula = Sale_Price ~ .,
+  data = ames_train,
+  method = "anova"
+)
+
+ames_dt1
+
+# visualizing with rpart.plot
+rpart.plot(ames_dt1)
+```
+
+Rpart is automatically applying a complexity parameter to prune the tree. You can view the plot of performance across the parameter range
+```{r}
+plotcp(ames_dt1)
+```
+
+Forcing a tree to grow fully with cp = 0.
+```{r}
+ames_dt2 <- rpart(
+  formula = Sale_Price ~.,
+  data = ames_train,
+  method = 'anova',
+  control = list(cp = 0, xval = 10)
+)
+
+plotcp(ames_dt2)
+abline(v = 11, lty = 'dashed')
+
+```
+Base rpart does some automated tuning, but you are able to use caret like with other models.
+
+```{r}
+# rpart cv results
+ames_dt1$cptable
+
+#caret cv results
+ames_dt3 <- train(
+  Sale_Price ~., 
+  data = ames_train,
+  method = 'rpart',
+  trControl = trainControl(method = 'cv', number = 10),
+  tuneLength = 20
+)
+
+ggplot(ames_dt3)
+```
+
+Feature Importance
+```{r}
+vip(ames_dt3, num_features = 40, bar = FALSE)
+
+
+# Construct partial dependence plots
+p1 <- partial(ames_dt3, pred.var = "Gr_Liv_Area") %>% autoplot()
+p2 <- partial(ames_dt3, pred.var = "Year_Built") %>% autoplot()
+p3 <- partial(ames_dt3, pred.var = c("Gr_Liv_Area", "Year_Built")) %>% 
+  plotPartial(levelplot = FALSE, zlab = "yhat", drape = TRUE, 
+              colorkey = TRUE, screen = list(z = -20, x = -60))
+
+# Display plots side by side
+gridExtra::grid.arrange(p1, p2, p3, ncol = 3)
+```
+
