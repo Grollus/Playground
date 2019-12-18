@@ -1,0 +1,209 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Helper packages
+library(dplyr)    # for data wrangling
+library(ggplot2)  # for awesome graphics
+theme_set(theme_minimal())
+# Modeling packages
+library(ranger)   # a c++ implementation of random forest 
+library(h2o)      # a java-based implementation of random forest
+
+library(rsample)
+
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+```
+
+Out of box performance
+```{r}
+# number of features
+n_features <- length(setdiff(names(ames_train), "Sale_Price"))
+
+# train a default random forest model
+ames_rf1 <- ranger(
+  Sale_Price ~ .,
+  data = ames_train,
+  mtry = floor(n_features/3),
+  respect.unordered.factors = 'order',
+  seed = 123
+)
+
+# OOB RMSE
+(default_rmse <- sqrt(ames_rf1$prediction.error))
+```
+
+## Tuning strategies
+As algorithms become more advanced, you need to be more judicious with hyperparameter tuning. Often there are
+numerous parameters and tuning all of them can be very computationally intense.
+
+###Full Cartesian Grid search
+```{r}
+# create grid
+hyper_grid <- expand.grid(
+  mtry = floor(n_features * c(.05, .15, .25, .333, .4)), # number of features to consider at any split
+  min.node.size = c(1, 3, 5, 10), # min number of features at a terminal node
+  replace = c(TRUE, FALSE), # sample with our without replacement
+  sample.fraction = c(.5, .63, .8), # percentage of data to sample every bootstrap sample
+  rmse = NA
+)
+
+# execute the full cartesian grid search
+for(i in seq_len(nrow(hyper_grid))){
+  # fit model for ith hyperparameter combination
+  fit <- ranger(
+    formula = Sale_Price ~ .,
+    data = ames_train,
+    num.trees = n_features * 10,
+    mtry = hyper_grid$mtry[i],
+    min.node.size = hyper_grid$min.node.size[i],
+    replace = hyper_grid$replace[i],
+    sample.fraction = hyper_grid$sample.fraction[i],
+    verbose = TRUE,
+    seed = 123,
+    respect.unordered.factors = 'order'
+  )
+  # export OOB error
+  hyper_grid$rmse[i] <- sqrt(fit$prediction.error)
+}
+
+# assess top 10 models
+hyper_grid %>%
+  arrange(rmse)%>%
+  mutate(perc_gain = (default_rmse - rmse) / default_rmse * 100) %>%
+  head(10)
+
+```
+
+### Random Grid Search
+Random grid search becomes quit valuable as parameter grid gets large and the model
+takes a long time to train. H2O has an implementation you can use.
+
+```{r}
+# initiate h2o session
+h2o.no_progress()
+h2o.init(max_mem_size = '5g')
+
+# convert training data to h2o object
+train_h2o <- as.h2o(ames_train)
+
+# set the response column to Sale_Price
+response <- "Sale_Price"
+
+# set predictor names
+predictors <- setdiff(colnames(ames_train), response)
+
+# fitting a default rf model in h2o framework
+h2o_rf1 <- h2o.randomForest(
+  x = predictors,
+  y = response,
+  training_frame = train_h2o,
+  ntrees = n_features * 10,
+  seed = 123
+)
+
+h2o_rf1
+
+# now doing a grid search in h2o. Grid needs to be a list for h2o
+# hyperparameter grid
+hyper_grid <- list(
+  mtries = floor(n_features * c(.05, .15, .25, .333, .4)),
+  min_rows = c(1, 3, 5, 10),
+  max_depth = c(10, 20, 30),
+  sample_rate = c(.55, .632, .70, .80)
+)
+
+# random grid search strategy
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "mse",
+  stopping_tolerance = 0.001,   # stop if improvement is < 0.1%
+  stopping_rounds = 10,         # over the last 10 models
+  max_runtime_secs = 60*5      # or stop search after 5 min.
+)
+
+# perform grid search 
+random_grid <- h2o.grid(
+  algorithm = "randomForest",
+  grid_id = "rf_random_grid",
+  x = predictors, 
+  y = response, 
+  training_frame = train_h2o,
+  hyper_params = hyper_grid,
+  ntrees = n_features * 10,
+  seed = 123,
+  stopping_metric = "RMSE",   
+  stopping_rounds = 10,           # stop if last 10 trees added 
+  stopping_tolerance = 0.005,     # don't improve RMSE by 0.5%
+  search_criteria = search_criteria
+)
+```
+This only assesses a portion of the full grid parameters, but still achieves a very good model.
+
+Collect the results and sort by model performance
+```{r}
+random_grid_perf <- h2o.getGrid(
+  grid_id = "rf_random_grid",
+  sort_by = "mse",
+  decreasing = FALSE
+)
+
+random_grid_perf
+```
+
+## Feature Importance
+```{r}
+# re-run model with impurity-based variable importance
+rf_impurity <- ranger(
+  formula = Sale_Price ~ .,
+  data = ames_train,
+  num.trees = 2000,
+  mtry = 32,
+  min.node.size = 1,
+  sample.fraction = .8,
+  replace = FALSE,
+  importance = 'impurity',
+  respect.unordered.factors = 'order',
+  verbose = FALSE,
+  seed = 123
+)
+
+# re-run with permutation-based variable importance
+rf_permutation <- ranger(
+  formula = Sale_Price ~ .,
+  data = ames_train,
+  num.trees = 2000,
+  mtry = 32,
+  min.node.size = 1,
+  sample.fraction = .8,
+  replace = FALSE,
+  importance = 'permutation',
+  respect.unordered.factors = 'order',
+  verbose = FALSE,
+  seed = 123
+)
+
+```
+
+Should see *similar*, but probably not identical feature importance between the two methods
+```{r}
+p1 <- vip::vip(rf_impurity, num_features = 25, bar = FALSE)
+p2 <- vip::vip(rf_permutation, num_features = 25, bar = FALSE)
+
+gridExtra::grid.arrange(p1, p2, nrow = 1)
+```
+
