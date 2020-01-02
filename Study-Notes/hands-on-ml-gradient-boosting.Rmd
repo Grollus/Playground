@@ -1,0 +1,358 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+# Helper packages
+library(dplyr)    # for general data wrangling needs
+
+# Modeling packages
+library(gbm)      # for original implementation of regular and stochastic GBMs
+library(h2o)      # for a java-based implementation of GBM variants
+library(xgboost)  # for fitting extreme gradient boosting
+library(rsample)
+
+set.seed(123)
+ames <- AmesHousing::make_ames()
+
+#splitting data into stratified random sample with rsample
+split <- initial_split(ames, prop = .7,
+                       strata = 'Sale_Price')
+# create the train and test dfs
+ames_train <- training(split)
+ames_test <- testing(split)
+
+# initialize all h2o stuff
+h2o.init(max_mem_size = '10g')
+
+train_h2o <- as.h2o(ames_train)
+response <- "Sale_Price"
+predictors <- setdiff(colnames(ames_train), response)
+```
+
+Can use formula interface (gbm::gbm) or x y specification interface(gbm::gbm.fit), but gbm.fit is more 
+efficient
+```{r}
+
+# Step 1 and 2: set high learning rate and then find optimal number of trees
+# run basic gbm
+set.seed(123)
+ames_gbm1 <- gbm(
+  formula = Sale_Price ~ .,
+  data = ames_train,
+  distribution = "gaussian", # SSE loss function
+  n.trees = 5000,
+  shrinkage = .1,
+  interaction.depth = 3, 
+  n.minobsinnode = 10,
+  cv.folds = 10
+)
+
+# find index for number of trees with minimum CV error
+best <- which.min(ames_gbm1$cv.error)
+
+# get MSE and compute RMSE
+sqrt(ames_gbm1$cv.error[best])
+
+# plot error curve
+gbm.perf(ames_gbm1, method = 'cv')
+```
+
+## Tuning
+These various models take a while to train. Don't run unless you are going to use them.
+```{r}
+
+# Step 3: Fix tree parameters and tune learning rate
+# create grid search
+hyper_grid <- expand.grid(
+  learning_rate = c(0.3, 0.1, 0.05, 0.01, 0.005),
+  RMSE = NA,
+  trees = NA,
+  time = NA
+)
+
+# execute grid search
+for(i in seq_len(nrow(hyper_grid))) {
+
+  # fit gbm
+  set.seed(123)  # for reproducibility
+  train_time <- system.time({
+    m <- gbm(
+      formula = Sale_Price ~ .,
+      data = ames_train,
+      distribution = "gaussian",
+      n.trees = 5000, 
+      shrinkage = hyper_grid$learning_rate[i], 
+      interaction.depth = 3, 
+      n.minobsinnode = 10,
+      cv.folds = 10 
+   )
+  })
+  
+  # add SSE, trees, and training time to results
+  hyper_grid$RMSE[i]  <- sqrt(min(m$cv.error))
+  hyper_grid$trees[i] <- which.min(m$cv.error)
+  hyper_grid$Time[i]  <- train_time[["elapsed"]]
+
+}
+
+arrange(hyper_grid, RMSE)
+```
+
+
+```{r}
+# Step 4: fix learning rate and tune tree specific parameters for that rate
+# search grid
+hyper_grid <- expand.grid(
+  n.trees = 6000,
+  shrinkage = 0.01,
+  interaction.depth = c(3, 5, 7),
+  n.minobsinnode = c(5, 10, 15)
+)
+
+# create model fit function
+model_fit <- function(n.trees, shrinkage, interaction.depth, n.minobsinnode) {
+  set.seed(123)
+  m <- gbm(
+    formula = Sale_Price ~ .,
+    data = ames_train,
+    distribution = "gaussian",
+    n.trees = n.trees,
+    shrinkage = shrinkage,
+    interaction.depth = interaction.depth,
+    n.minobsinnode = n.minobsinnode,
+    cv.folds = 10
+  )
+  # compute RMSE
+  sqrt(min(m$cv.error))
+}
+
+# perform search grid with functional programming
+hyper_grid$rmse <- purrr::pmap_dbl(
+  hyper_grid,
+  ~ model_fit(
+    n.trees = ..1,
+    shrinkage = ..2,
+    interaction.depth = ..3,
+    n.minobsinnode = ..4
+    )
+)
+# results
+arrange(hyper_grid, rmse)
+```
+
+## Stochastic GBM Implementation
+```{r}
+# refined hyperparameter grid
+hyper_grid <- list(
+  sample_rate = c(0.5, 0.75, 1),              # row subsampling
+  col_sample_rate = c(0.5, 0.75, 1),          # col subsampling for each split
+  col_sample_rate_per_tree = c(0.5, 0.75, 1)  # col subsampling for each tree
+)
+
+# random grid search strategy
+search_criteria <- list(
+  strategy = "RandomDiscrete",
+  stopping_metric = "mse",
+  stopping_tolerance = 0.001,   
+  stopping_rounds = 10,         
+  max_runtime_secs = 60*60      
+)
+
+# perform grid search 
+grid <- h2o.grid(
+  algorithm = "gbm",
+  grid_id = "gbm_grid",
+  x = predictors, 
+  y = response,
+  training_frame = train_h2o,
+  hyper_params = hyper_grid,
+  ntrees = 6000,
+  learn_rate = 0.01,
+  max_depth = 7,
+  min_rows = 5,
+  nfolds = 10,
+  stopping_rounds = 10,
+  stopping_tolerance = 0,
+  search_criteria = search_criteria,
+  seed = 123
+)
+
+# collect the results and sort by our model performance metric of choice
+grid_perf <- h2o.getGrid(
+  grid_id = "gbm_grid", 
+  sort_by = "mse", 
+  decreasing = FALSE
+)
+
+grid_perf
+
+# Grab the model_id for the top model, chosen by cross validation error
+best_model_id <- grid_perf@model_ids[[1]]
+best_model <- h2o.getModel(best_model_id)
+
+# Now let’s get performance metrics on the best model
+h2o.performance(model = best_model, xval = TRUE)
+```
+
+## XGBOOST
+
+```{r}
+library(recipes)
+xgb_prep <- recipe(Sale_Price ~ ., data = ames_train) %>%
+  step_integer(all_nominal()) %>%
+  prep(training = ames_train, retain = TRUE) %>%
+  juice()
+
+X <- as.matrix(xgb_prep[setdiff(names(xgb_prep), "Sale_Price")])
+Y <- xgb_prep$Sale_Price
+
+set.seed(123)
+ames_xgb <- xgb.cv(
+  data = X,
+  label = Y,
+  nrounds = 6000,
+  objective = "reg:linear",
+  early_stopping_rounds = 50, 
+  nfold = 10,
+  params = list(
+    eta = 0.1,
+    max_depth = 3,
+    min_child_weight = 3,
+    subsample = 0.8,
+    colsample_bytree = 1.0),
+  verbose = 0
+)  
+
+# minimum test CV RMSE
+min(ames_xgb$evaluation_log$test_rmse_mean)
+```
+
+## Tuning strategy
+```{r}
+library(recipes)
+# encode categorical variables, prep the recipe and then juice--actually do--the preprocessing-- in this case encoding
+xgb_prep <- recipe(Sale_Price ~ . , data = ames_train)%>%
+  step_integer(all_nominal())%>%
+  prep(training = ames_train, retain = TRUE)%>%
+  juice()
+
+# grab features from tibble
+X <- as.matrix(xgb_prep[setdiff(names(xgb_prep), "Sale_Price")])
+# grab response from tibble
+Y <- xgb_prep$Sale_Price
+
+# grid search as done in other sections was used to find hyperparameters used below
+set.seed(123)
+
+ames_xgb <- xgb.cv(
+  data = X,
+  label = Y,
+  nrounds = 6000,
+  objective = 'reg:linear',
+  early_stopping_rounds = 50,
+  nfold = 10,
+  params = list(
+    eta = 0.1,
+    max_depth = 3,
+    min_child_weight = 3,
+    subsample = 0.8,
+    colsample_bytree = 1.0),
+  verbose = 0
+)
+
+# min test CV RMSE
+min(ames_xgb$evaluation_log$test_rmse_mean)
+```
+
+
+Now you can assess if the model is overfitting which could be impacting performance. Do this with a grid search
+that explores the regularization parameters space.
+```{r}
+# hyperparameter grid. see xgb.train for explaination of each parameter
+hyper_grid <- expand.grid(
+  eta = 0.01,
+  max_depth = 3, 
+  min_child_weight = 3,
+  subsample = 0.5, 
+  colsample_bytree = 0.5,
+  gamma = c(0, 1, 10, 100, 1000),
+  lambda = c(0, 1e-2, 0.1, 1, 100, 1000, 10000),
+  alpha = c(0, 1e-2, 0.1, 1, 100, 1000, 10000),
+  rmse = 0,          # a place to dump RMSE results
+  trees = 0          # a place to dump required number of trees
+)
+
+# do the grid search
+for(i in seq_len(nrow(hyper_grid))){
+  set.seed(123)
+  m <- xgb.cv(
+    data = X,
+    label = Y,
+    nrounds = 4000,
+    objective = 'reg:linear',
+    early_stopping_rounds = 50,
+    nfold = 10,
+    verbose = 0,
+    params = list(
+      eta = hyper_grid$eta[i],
+      max_depth = hyper_grid$max_depth[i],
+      min_child_weight = hyper_grid$min_child_weight[i],
+      subsample = hyper_grid$subsample[i],
+      colsample_bytree = hyper_grid$colsample_bytree[i],
+      gamma = hyper_grid$gamma[i],
+      lambda = hyper_grid$lambda[i],
+      alpha = hyper_grid$alpha[i]
+    )
+  )
+  hyper_grid$rmse[i] <- min(m$evaluation_log$test_rmse_mean)
+  hyper_grid$trees[i] <- m$best_iteration
+  
+}
+
+# results
+hyper_grid %>%
+  filter(rmse > 0)%>%
+  arrange(rmse)%>%
+  glimpse()
+```
+
+Once you have the optimal hyperparameters, fit the final model with xgb.train (or xgboost)
+```{r}
+# optimal parameter list
+params <- list(
+  eta = 0.01,
+  max_depth = 3,
+  min_child_weight = 3,
+  subsample = 0.5,
+  colsample_bytree = 0.5
+)
+
+# train final model
+xgb.fit.final <- xgboost(
+  params = params,
+  data = X,
+  label = Y,
+  nrounds = 3944,
+  objective = "reg:linear",
+  verbose = 0
+)
+```
+
+## Feature Importance
+Can use VIP for feature importance. Default method is gain, but that can be changed with 'type' argument.
+```{r}
+# variable importance plot
+vip::vip(xgb.fit.final)
+
+# can also use xgboost.
+xgb.ggplot.importance(xgb.importance(xgb.fit.final))
+
+
+```
+
