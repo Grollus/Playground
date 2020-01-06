@@ -1,6 +1,9 @@
 library(spotifyr)
 library(tidyverse)
 
+# Minor alterations of code from https://www.kaylinpavlik.com/classifying-songs-genres/. She did 99% of the work.
+# I just want to see what some of the classical I listen to looks like so I need to get some classical albums.
+
 # generates the access token necessary to interact with the spotify api
 access_token <- get_spotify_access_token(client_id = Sys.getenv("SPOTIFY_CLIENT_ID"), 
                                          client_secret = Sys.getenv("SPOTIFY_CLIENT_SECRET"))
