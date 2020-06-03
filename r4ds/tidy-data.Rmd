@@ -1,0 +1,215 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+theme_set(theme_minimal())
+```
+
+```{r}
+t2_cases <- filter(table2, type == 'cases')%>%
+  rename(cases = count)%>%
+  arrange(country, year)
+
+t2_population <- filter(table2, type == 'population')%>%
+  rename(population = count)%>%
+  arrange(country, year)
+
+t2_cases_per_cap <- tibble(
+  year = t2_cases$year,
+  country = t2_cases$country,
+  cases = t2_cases$cases,
+  population = t2_population$population
+)%>%
+  mutate(cases_per_cap = cases/population)%>%
+  select(country, year, cases_per_cap)
+
+
+t2_cases_per_cap <- t2_cases_per_cap%>%
+  mutate(type = 'cases_per_cap')%>%
+  rename(count = cases_per_cap)
+
+bind_rows(table2, t2_cases_per_cap)%>%
+  arrange(country, year, type, count)
+
+table4a
+table4b
+
+table4c <- tibble(
+  country = table4a$country,
+  `1999` = table4a[['1999']]/table4b[['1999']] * 10000,
+  `2000` = table4a[['2000']]/table4b[['2000']] * 10000
+)
+
+table2 %>%
+  filter(type == 'cases')%>%
+  ggplot(aes(year, count))+
+  geom_point(aes(color = country))+
+  geom_line(aes(group = country), color = 'grey')+
+  scale_x_continuous(breaks = unique(table2$year))
+```
+
+```{r}
+table4a%>%
+  pivot_longer(c(`1999`, `2000`), names_to = 'year', values_to = 'cases')%>%
+  left_join(table4b%>%
+  pivot_longer(c(`1999`, `2000`), names_to = 'year', values_to = 'population'))
+
+table4b%>%
+  pivot_longer(c(`1999`, `2000`), names_to = 'year', values_to = 'population')
+```
+
+```{r}
+table2 %>%
+  pivot_wider(names_from = type, values_from = count)
+```
+
+
+```{r}
+stocks <- tibble(
+  year   = c(2015, 2015, 2016, 2016),
+  half  = c(   1,    2,     1,    2),
+  return = c(1.88, 0.59, 0.92, 0.17)
+)
+
+stocks%>%
+  pivot_wider(names_from =year, values_from = return)%>%
+  pivot_longer(`2015`:`2016`, names_to = "year", values_to = "return", names_ptypes = list(half = double(), year = integer(), return = double()))
+?pivot_longer
+```
+
+```{r}
+table4a %>% 
+  pivot_longer(c(1999, 2000), names_to = "year", values_to = "cases")
+#> Error in inds_combine(.vars, ind_list): Position must be between 0 and n
+```
+
+```{r}
+people <- tribble(
+  ~name,             ~names,  ~values,
+  #-----------------|--------|------
+  "Phillip Woods",   "age",       45,
+  "Phillip Woods",   "height",   186,
+  "Phillip Woods",   "age",       50,
+  "Jessica Cordero", "age",       37,
+  "Jessica Cordero", "height",   156
+)
+
+people%>%
+  group_by(name, names)%>%
+  mutate(obs = row_number())%>%
+  pivot_wider(names_from = names, values_from = values)
+```
+
+```{r}
+preg <- tribble(
+  ~pregnant, ~male, ~female,
+  "yes",     NA,    10,
+  "no",      20,    12
+)
+preg%>%
+  pivot_longer(c(male, female), names_to = 'sex', values_to = 'count')
+```
+
+```{r}
+table3 %>%
+  separate(rate, into = c('cases', 'population'), sep = "/", convert = TRUE)
+
+table3 %>%
+  separate(year, into = c( "century", "year"), sep = 2)
+
+table5%>%
+  unite(new, century, year, sep = '')
+```
+
+```{r}
+tibble(
+  x = c("a, b, c", "d, e", "h, i, j")
+)%>%
+  separate(x, into = c("one", "two", "three"))
+```
+
+```{r}
+table3 %>%
+  separate(rate, into = c('cases', 'population'), sep = "/", convert = TRUE)
+
+table3 %>%
+  extract(rate, into = c("cases", "population"), regex = "([0-9]+)\\/([0-9]+)")
+```
+
+```{r}
+stocks <- tibble(
+  year   = c(2015, 2015, 2015, 2015, 2016, 2016, 2016),
+  qtr    = c(   1,    2,    3,    4,    2,    3,    4),
+  return = c(1.88, 0.59, 0.35,   NA, 0.92, 0.17, 2.66)
+)
+
+stocks %>%
+  pivot_wider(names_from = year, values_from = return)%>%
+  pivot_longer(cols = c(`2015`, `2016`), names_to = "year", values_to = "return",
+               values_drop_na = TRUE)
+
+stocks %>%
+  complete(year, qtr)
+
+treatment <- tribble(
+  ~ person,           ~ treatment, ~response,
+  "Derrick Whitmore", 1,           7,
+  NA,                 2,           10,
+  NA,                 3,           9,
+  "Katherine Burke",  1,           4
+)
+
+treatment %>%
+  fill(person, .direction = "down")
+```
+
+```{r}
+who1 <- who %>%
+  pivot_longer(new_sp_m014:newrel_f65, names_to = 'key', values_to = 'cases', values_drop_na = TRUE)
+
+who2 <- who1 %>%
+  mutate(names_from = stringr::str_replace(key, "newrel", "new_rel"))
+
+
+who3 <- who2 %>%
+  separate(names_from, c("new", "type", "sexage"), sep = "_")
+
+who3 %>%
+  count(new)
+
+who3 %>%
+  group_by(country, iso2, iso3)%>%
+  count(country)%>%
+  View()
+
+who3 %>%
+  select(country, iso2, iso3)%>%
+  distinct()%>%
+  group_by(country)%>%
+  filter(n() > 1)
+
+who4 <- who3 %>%
+  select(-new, -iso2, -iso3)
+
+who5 <- who4 %>%
+  separate(sexage, c('sex', 'age'), sep = 1)
+```
+
+```{r}
+who5%>%
+  group_by(country, year, sex)%>%
+  summarise(total_cases = sum(cases))%>%
+  filter(year > 1995)%>%
+  ggplot(aes(x = year, y = total_cases, color = country))+
+  geom_line()+
+  facet_wrap(~sex)+
+  theme(legend.position = 'none')
+```
+

@@ -1,0 +1,180 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+
+tibble(
+  x = 1:5,
+  y = 1, 
+  z = x ^ 2 + y
+)
+
+tibble(
+  `:)` = "smile",
+  ` ` = "space",
+  `2000` = "number"
+)
+
+
+tribble(
+  ~x, ~y, ~z,
+  #--/--/----
+  "a", 2, 3.6,
+  "b", 1, 8.5
+)
+```
+
+
+```{r}
+tibble(
+  a = lubridate::now() + runif(1e3) * 86400,
+  b = lubridate::today() + runif(1e3) * 30,
+  c = 1:1e3,
+  d = runif(1e3),
+  e = sample(letters, 1e3, replace = TRUE)
+)
+#> # A tibble: 1,000 x 5
+#>   a                   b              c     d e    
+#>   <dttm>              <date>     <int> <dbl> <chr>
+#> 1 2020-01-15 20:43:23 2020-01-22     1 0.368 n    
+#> 2 2020-01-16 14:48:32 2020-01-27     2 0.612 l    
+#> 3 2020-01-16 09:12:12 2020-02-06     3 0.415 p    
+#> 4 2020-01-15 22:33:29 2020-02-05     4 0.212 m    
+#> 5 2020-01-15 18:57:45 2020-02-02     5 0.733 i    
+#> 6 2020-01-16 05:58:42 2020-01-29     6 0.460 n    
+#> # … with 994 more rows
+
+
+nycflights13::flights%>%
+  print(n = 10, width = Inf)
+```
+
+```{r}
+df <- tibble(
+  x = runif(5),
+  y = rnorm(5)
+)
+
+df$x # vector
+df[['x']] # vector
+df['x'] # 1 column df/tibble
+df[[1]] # vector
+
+# use placeholder . to use this sort of selection in pipes
+df %>%
+  .$x
+
+df %>%
+  .[['x']]
+
+as.data.frame(df)%>%
+  .['x']
+
+as.data.frame(df)%>%
+  .[['x']]
+```
+
+## How do you tell if an object is a tibble?
+```{r}
+mtcars
+
+as_tibble(mtcars)
+```
+
+Can determine for sure with is_tibble or class(df), but can also tell by the formatting differences.
+Tibble will display the variable type and just the head of the data.
+
+
+## Compare the difference of the operations on a tibble vs a data.frame.
+```{r}
+df <- data.frame(abc = 1, xyz = "a")
+df$x
+class(df[, "xyz"])
+class(df[, c("abc", "xyz")])
+
+df2 <- as_tibble(df)
+df2$x
+class(df2[, "xyz"])
+class(df2[, c("abc", "xyz")])
+```
+
+tibbles are more consistent with what type of object they return vs data.frames. This might mean you have to type more to get 
+what you need, but saves bugs in the future.
+
+
+## If you have the name of a variable stored in an object, e.g. var <- "mpg", how can you extract the reference variable from a tibble?
+```{r}
+var <- "mpg"
+
+mtcars2 <- as_tibble(mtcars)
+
+mtcars2[[var]]
+```
+
+Using $ will think you are looking for a variable named 'var' (df$var)
+
+
+##Practice referring to non-syntactic names in the following data frame by:
+
+Extracting the variable called 1.
+
+Plotting a scatterplot of 1 vs 2.
+
+Creating a new column called 3 which is 2 divided by 1.
+
+Renaming the columns to one, two and three.
+```{r}
+annoying <- tibble(
+  `1` = 1:10,
+  `2` = `1` * 2 + rnorm(length(`1`))
+)
+
+annoying$`1`
+annoying[[1]]
+annoying[["1"]]
+
+
+ggplot(annoying, aes(x = `1`, y = `2`))+
+  geom_point()
+
+annoying$`3` <- annoying$`2`/annoying$`1`
+
+annoying %>%
+  rename(one = `1`,
+         two = `2`,
+         three = `3`)
+```
+
+
+## What does tibble::enframe() do? When might you use it?
+```{r}
+??enframe
+
+x <- runif(5)
+y <- rnorm(5)
+
+deframe(enframe(list(x = x, y = y)))
+
+enframe(c(x = x, y = y))
+
+enframe(x, name = "x")%>%
+  bind_cols(enframe(y, name = "y"))
+```
+Converts  vectors or lists to data frames
+
+## What option controls how many additional column names are printed at the footer of a tibble?
+
+```{r}
+mtcars2
+
+?print.tbl()
+```
+
+n_extra controls additional column printing. Easy way to find this is to examine the print function for tibbles
