@@ -1,0 +1,305 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(tidyverse)
+```
+
+
+```{r}
+x1 <- c("Dec", "Apr", "Jan", "Mar")
+x2 <- c("Dec", "Apr", "Jam", "Mar")
+
+```
+
+To create a factor you must start by creating a list of the valid levels.
+
+```{r}
+month_levels <- c(
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"
+)
+
+y1 <- factor(x1, levels = month_levels)
+
+sort(y1)
+```
+
+Values not in the set are silently converted to NA
+
+```{r}
+y2 <- factor(x2, levels = month_levels)
+```
+
+Set the order of the levels to match the order of first appearance in the data
+```{r}
+f1 <- factor(x1, levels = unique(x1))
+f1
+
+# can do the same thing after the fact with fct_inorder()
+f2 <- x1 %>%
+  factor()%>%
+  fct_inorder()
+```
+
+Access the set of valid levels with levels()
+```{r}
+levels(f2)
+```
+
+```{r}
+gss_cat
+
+gss_cat%>%
+  count(race)
+
+# force ggplot to display factor levels that don't have any values with scale_x_discrete(drop = FALSE)
+gss_cat %>%
+  ggplot(aes(race))+
+  geom_bar()+
+  scale_x_discrete(drop = FALSE)
+```
+
+
+
+Explore the distribution of rincome (reported income). What makes the default bar chart hard to understand? How could you improve the plot?
+
+```{r}
+gss_cat %>%
+  ggplot(aes(rincome))+
+  geom_bar()+
+  coord_flip()
+```
+Default bar chart you can't see the axis values so you can flip those. Also, the ordering makes the graph tough to read.
+
+What is the most common relig in this survey? What’s the most common partyid?
+```{r}
+# protestant
+gss_cat %>%
+  count(relig, sort = TRUE)
+
+# independent
+gss_cat %>%
+  count(partyid, sort = TRUE)
+```
+
+Which relig does denom (denomination) apply to? How can you find out with a table? How can you find out with a visualisation?
+```{r}
+levels(gss_cat$denom)
+```
+
+
+## Modifying Factor Order
+
+```{r}
+relig_summary <- gss_cat %>%
+  group_by(relig)%>%
+  summarise(
+    age = mean(age, na.rm = TRUE),
+    tvhours = mean(tvhours, na.rm = TRUE),
+    n = n()
+  )
+
+relig_summary%>%
+  ggplot(aes(tvhours, relig))+
+  geom_point()
+
+# better version
+relig_summary%>%
+  ggplot(aes(tvhours, fct_reorder(relig, tvhours)))+
+  geom_point()
+
+# better still
+relig_summary%>%
+  mutate(relig = fct_reorder(relig, tvhours))%>%
+  ggplot(aes(tvhours, relig))+
+  geom_point()
+```
+
+
+Shouldn't arbitrarily reorder variables that have and order though--like income. Try to only reorder
+factors whose levels are arbitrary
+```{r}
+rincome_summary <- gss_cat%>%
+  group_by(rincome)%>%
+  summarise(
+    age = mean(age, na.rm = TRUE),
+    tvhours = mean(tvhours, na.rm = TRUE),
+    n = n()
+  )
+
+rincome_summary%>%
+  mutate(rincome = fct_reorder(rincome, age))%>%
+  ggplot(aes(age, rincome))+
+  geom_point()
+```
+
+Can reorder a single level if it makes sense--for instance 'Not applicable' isn't like the other income variables
+so it can makes sense to relevel it.
+```{r}
+rincome_summary%>%
+  mutate(rincome = fct_relevel(rincome, "Not applicable"))%>%
+  ggplot(aes(age, rincome))+
+  geom_point()
+```
+
+
+fct_reorder2() reorders factor by the y values associated with the largest x values. 
+
+```{r}
+by_age <- gss_cat %>%
+  filter(!is.na(age))%>%
+  count(age, marital)%>%
+  group_by(age)%>%
+  mutate(prop = n/sum(n))
+
+by_age %>%
+  ggplot(aes(age, prop, color = marital))+
+  geom_line(na.rm = TRUE)
+```
+This graph is tough to read because the lines don't match up with the legend color order
+
+```{r}
+by_age %>%
+  ggplot(aes(age, prop, color = fct_reorder2(marital, age, prop)))+
+  geom_line(na.rm = TRUE)+
+  labs(color = 'Marital')
+```
+
+Can also use fct_infreq() to reorder by frequency easily
+```{r}
+gss_cat%>%
+  mutate(marital = marital %>% fct_infreq() %>% fct_rev())%>%
+  ggplot(aes(marital))+
+  geom_bar()
+```
+
+
+There are some suspiciously high numbers in tvhours. Is the mean a good summary?
+```{r}
+gss_cat %>%
+ filter(!is.na(tvhours))%>%
+  ggplot(aes(tvhours))+
+  geom_histogram(binwidth = 1)
+```
+Median may be more appropriate, but it depends on your goal.
+
+For each factor in gss_cat identify whether the order of the levels is arbitrary or principled.
+```{r}
+gss_cat%>%
+  select_if(is.factor)%>%
+  map(., levels)
+```
+
+Why did moving “Not applicable” to the front of the levels move it to the bottom of the plot?
+
+
+## Modifying factor levels
+
+Modifying factor levels is the more powerful version of changing the orders of levels
+fct_recode() is your first tool to do this
+
+```{r}
+gss_cat %>%
+  count(partyid)
+
+gss_cat %>%
+  mutate(partyid = fct_recode(partyid,
+    "Republican, strong"    = "Strong republican",
+    "Republican, weak"      = "Not str republican",
+    "Independent, near rep" = "Ind,near rep",
+    "Independent, near dem" = "Ind,near dem",
+    "Democrat, weak"        = "Not str democrat",
+    "Democrat, strong"      = "Strong democrat"
+  ))%>%
+    count(partyid)
+```
+
+Can combine groups into one level. Use this with great care or you will end up combining groups that
+are truly different.
+```{r}
+gss_cat %>%
+  mutate(partyid = fct_recode(partyid,
+    "Republican, strong"    = "Strong republican",
+    "Republican, weak"      = "Not str republican",
+    "Independent, near rep" = "Ind,near rep",
+    "Independent, near dem" = "Ind,near dem",
+    "Democrat, weak"        = "Not str democrat",
+    "Democrat, strong"      = "Strong democrat",
+    "Other"                 = "No answer",
+    "Other"                 = "Don't know",
+    "Other"                 = "Other party"
+  )) %>%
+  count(partyid)
+```
+
+Can use fct_collapse() to collapse multiple levels
+```{r}
+gss_cat %>%
+  mutate(partyid = fct_collapse(partyid,
+                                other = c("No answer", "Don't know", "Other party"),
+                                rep = c("Strong republican", "Not str republican"),
+                                ind = c("Ind,near rep", "Independent", "Ind,near dem"),
+                                dem = c("Not str democrat", "Strong democrat")
+  ))%>%
+  count(partyid)
+```
+
+If you want to lump together small groups to make a plot or table simpler use fct_lump()
+
+```{r}
+gss_cat %>%
+  mutate(relig = fct_lump(relig))%>%
+  count(relig)
+
+gss_cat %>%
+  mutate(relig = fct_lump(relig, n = 10))%>%
+  count(relig, sort = TRUE)
+
+```
+
+
+
+How have the proportions of people identifying as Democrat, Republican, and Independent changed over time?
+```{r}
+gss_cat %>%
+  mutate(partyid = fct_collapse(partyid,
+                                other = c("No answer", "Don't know", "Other party"),
+                                rep = c("Strong republican", "Not str republican"),
+                                ind = c("Ind,near rep", "Independent", "Ind,near dem"),
+                                dem = c("Not str democrat", "Strong democrat")
+  ))%>%
+  count(year, partyid)%>%
+  group_by(year)%>%
+  mutate(p = n/sum(n))%>%
+  ggplot(aes(year, p, color = fct_reorder2(partyid, year, p)))+
+  geom_line()+
+  geom_point()
+```
+
+
+How could you collapse rincome into a small set of categories?
+```{r}
+gss_cat%>%
+  mutate(rincome = fct_collapse(rincome,
+                                Unknown = c("No answer", "Don't know", "Refused", "Not applicable"),
+                                "Less than $5000" = c("Lt $1000", str_c(
+                                  "$", c("1000", "3000", "4000"),
+                                  " to ", c("2999", "3999", "4999")
+                                )),
+                                "$5000 to 10000" = str_c(
+                                  "$", c("5000", "6000", "7000", "8000"),
+                                  " to ", c("5999", "6999", "7999", "9999")
+                                )))%>%
+  ggplot(aes(x = rincome))+
+  geom_bar()+
+  coord_flip()
+
+```
+
