@@ -1,0 +1,110 @@
+---
+title: "Programming-pipes"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+library(magrittr)
+```
+
+
+```{r}
+diamonds <- ggplot2::diamonds
+
+diamonds2 <- diamonds %>%
+  dplyr::mutate(price_per_carat = price/carat)
+
+pryr::object_size(diamonds)
+
+pryr::object_size(diamonds2)
+
+pryr::object_size(diamonds, diamonds2)
+```
+
+
+Using the pipe you can assemble something like 
+```{r, eval = FALSE}
+foo_foo %>%
+  hop(through = forest)%>%
+  scoop(up = field_mice)%>%
+  bop(on = head)
+```
+
+Behind the scenes the pipe is assembling something like this though
+```{r, eval = FALSE}
+my_pipe <- function(.){
+  . <- hop(., through = forest)
+  . <- scoop(., up = field_mic)
+  bop(., on = head)
+}
+
+my_pipe(foo_foo)
+```
+
+So pipes won't work for 2 classes of functions
+
+1) Functions that use the current environment. assign() creates a new variable with given name in the 
+current environment. Other functions that face this problem include get() and load().
+```{r}
+assign("x", 10)
+
+# this doesn't work because the it assigns it to a temp environ used by %>%
+# have to be explicit about the environment
+"x" %>% assign(10)
+
+# this would work
+env <- environment()
+"x" %>% assign(100, envir = env)
+```
+
+2) Functions that use lazy evaluation. In R, function arguments are only computed when the function uses them, not prior
+to calling the function. The pipe computes each element in turn, so you can't rely on this behavior.
+```{r}
+tryCatch(stop("!"), error = function(e) "An error")
+
+stop("!")%>%
+  tryCatch(error = function(e) "An error")
+```
+
+A pretty big number of functions use this behavior in base R -- tryCatch, try, suppressMessages, suppressWarnigns, etc
+
+
+### When NOT to use the pipe
+
+Pipes are mainly useful for rewriting a fairly short linear sequence of operations. You should reach for another tool when:
+
+* Your pipes are longer than, say, ten steps. In this case, intermediate objects with good names will make debugging easier
+and make your code easier to understand because variable names communicate intent.
+
+* You have multiple inputs or outputs. If there isn't one primary object being transformed, but two or more objects being combined
+together, don't use the pipe.
+
+* You are starting to think about a directed graph with a complex dependency structure. Pipes are fundamentally linear
+so expressing complex relationships is typically confusing.
+
+
+### Other magrittr tools
+```{r}
+rnorm(100)%>%
+  matrix(ncol = 2)%>%
+  plot()%>%
+  str()
+
+rnorm(100)%>%
+  matrix(ncol = 2)%T>%
+  plot()%>%
+  str()
+
+mtcars %>%
+  cor(disp, mpg)
+
+mtcars %$%
+  cor(disp, mpg)
+
+```
+
+
